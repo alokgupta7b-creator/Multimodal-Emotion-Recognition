@@ -43,18 +43,22 @@ The framework consists of three specialized unimodal processing branches unified
 
 ---
 
-## 3. Dataset Infrastructure: MELD
+## 3. Supported Benchmarks & Dataset Infrastructure
 
-The primary benchmark supported by this project is the **Multimodal EmotionLines Dataset (MELD)**:
-- **13,708 utterances** across **1,433 dialogues** from multi-party conversations.
-- **7 Emotion Categories**: `anger`, `disgust`, `fear`, `joy`, `neutral`, `sadness`, `surprise`.
-- **3 Sentiment Categories**: `positive`, `negative`, `neutral`.
-- **Predefined Partitions**:
-  - **Train**: 9,989 utterances (9,988 multimodal-usable)
-  - **Development**: 1,109 utterances (1,108 multimodal-usable)
-  - **Test**: 2,610 utterances (2,610 multimodal-usable)
+This framework evaluates dynamic reliability and cross-modal consistency across two complementary benchmark datasets:
 
-Detailed dataset documentation, class distribution analyses, and known data limitation records are documented in the [MELD Dataset Card](datasets/MELD/dataset_card.md).
+### Dataset Comparison
+
+| Feature Dimension | Benchmark 1: [MELD](datasets/MELD/) | Benchmark 2: [CMU-MOSEI](datasets/CMU-MOSEI/) |
+| :--- | :--- | :--- |
+| **Discourse Context** | Multi-party conversational dialogue (*Friends* sitcom) | In-the-wild monologue video presentations (YouTube) |
+| **Primary Challenge** | Conversational context tracking & speaker turn dynamics | Sensory noise robustness & unconstrained web variability |
+| **Segment Count** | 13,708 utterances (1,433 dialogues) | 23,453 monologue segments (3,294 videos) |
+| **Speaker Count** | Fixed cast of recurring sitcom characters | >1,000 distinct real-world speakers |
+| **Emotion Schema** | 7 Categorical classes (`neutral`, `joy`, `sadness`, `anger`, `surprise`, `disgust`, `fear`) | 6 Continuous intensities in `[0.0, 3.0]` (`happy`, `sad`, `anger`, `surprise`, `disgust`, `fear`) |
+| **Sentiment Schema** | 3 Discrete classes (`positive`, `negative`, `neutral`) | Continuous sentiment score in `[-3.0, +3.0]` |
+| **Modality Alignment** | Utterance-level video (.mp4) and audio (.wav) | Temporal segment timestamps `[start_time, end_time]` (.mp4, .wav, .csd) |
+| **Documentation** | [MELD Dataset Card](datasets/MELD/dataset_card.md) | [CMU-MOSEI Dataset Card](datasets/CMU-MOSEI/dataset_card.md) |
 
 ---
 
@@ -62,23 +66,40 @@ Detailed dataset documentation, class distribution analyses, and known data limi
 
 ```text
 .
-├── README.md                      # Main project documentation
-├── .gitignore                     # Repository exclusions (media, models, caches)
+├── README.md                          # Main project documentation & benchmark overview
+├── .gitignore                         # Strict repository exclusions (media, features, models)
 └── datasets/
-    └── MELD/
-        ├── README.md              # MELD module instructions & schema reference
-        ├── dataset_card.md        # Dataset specifications & anomaly documentation
-        ├── download_dataset.ps1   # PowerShell download, verification & extraction utility
-        ├── prepare_dataset.py     # Deterministic preprocessing & manifest generator
-        ├── annotations/           # Local annotations folder (.gitkeep tracked)
-        ├── manifests/             # Reproducible split manifests (tracked in git)
-        │   ├── train_manifest.csv
-        │   ├── dev_manifest.csv
-        │   └── test_manifest.csv
-        └── reports/               # Preprocessing validation & audit reports
-            ├── preprocessing_report.json
-            ├── preprocessing_report.md
-            └── exclusions.csv
+    ├── MELD/                          # Benchmark 1: Conversational Emotion Recognition
+    │   ├── README.md                  # MELD module guide & setup instructions
+    │   ├── dataset_card.md            # MELD specifications & anomaly documentation
+    │   ├── download_dataset.ps1       # Annotation download & safe extraction utility
+    │   ├── prepare_dataset.py         # Deterministic preprocessing & manifest generator
+    │   ├── annotations/               # Local annotation CSV directory (.gitkeep tracked)
+    │   ├── manifests/                 # Reproducible split manifests (tracked in git)
+    │   │   ├── train_manifest.csv
+    │   │   ├── dev_manifest.csv
+    │   │   └── test_manifest.csv
+    │   └── reports/                   # Preprocessing validation & exclusion reports
+    │       ├── preprocessing_report.json
+    │       ├── preprocessing_report.md
+    │       └── exclusions.csv
+    └── CMU-MOSEI/                     # Benchmark 2: In-the-Wild Multimodal Monologues
+        ├── README.md                  # CMU-MOSEI module guide & SDK setup reference
+        ├── dataset_card.md            # CMU-MOSEI specifications & continuous schema
+        ├── download_dataset.ps1       # Environment check, SDK helper & archive unpacker
+        ├── prepare_dataset.py         # Deterministic preprocessing & split isolation validator
+        ├── annotations/               # Local annotations directory (.gitkeep tracked)
+        │   └── .gitkeep
+        ├── manifests/                 # Generated split manifests directory (.gitkeep tracked)
+        │   └── .gitkeep
+        ├── reports/                   # Preprocessing audit reports directory (.gitkeep tracked)
+        │   └── .gitkeep
+        └── tests/                     # Automated regression test suite
+            ├── __init__.py
+            ├── fixtures/              # Non-restricted synthetic test fixtures
+            │   ├── synthetic_mosei_annotations.csv
+            │   └── synthetic_splits.json
+            └── test_prepare_dataset.py # Comprehensive unit tests
 ```
 
 ---
@@ -91,44 +112,47 @@ git clone https://github.com/alokgupta7b-creator/Multimodal-Emotion-Recognition.
 cd Multimodal-Emotion-Recognition
 ```
 
-### 2. Obtain Annotations & Raw Data
-Run the included setup script to fetch the official MELD annotations:
+### 2. MELD Dataset Preparation
+Fetch official MELD annotations and generate manifests:
 ```powershell
+# Fetch official annotations
 .\datasets\MELD\download_dataset.ps1
-```
 
-To extract local `.tar.gz` archives if present in `datasets/MELD/raw`:
-```powershell
-.\datasets\MELD\download_dataset.ps1 -ExtractArchives
-```
-
-### 3. Generate Manifests & Validate Integrity
-Run the reproducible preprocessing pipeline:
-```bash
+# Generate manifests and audit reports
 python datasets/MELD/prepare_dataset.py --meld-raw-dir "datasets/MELD/raw"
 ```
 
-To generate local manifests containing dialogue transcripts for text-only experiments:
+### 3. CMU-MOSEI Dataset Preparation
+Verify environment, inspect SDK instructions, and execute the preparation pipeline:
+```powershell
+# Check environment and display SDK download instructions
+.\datasets\CMU-MOSEI\download_dataset.ps1 -CheckEnvironment
+
+# Run metadata validation and generate split manifests
+python datasets/CMU-MOSEI/prepare_dataset.py `
+    --annotations-file "datasets/CMU-MOSEI/annotations/mosei_annotations.csv" `
+    --output-dir "datasets/CMU-MOSEI" `
+    --skip-media-verify
+```
+
+### 4. Run Automated Test Suites
+Execute the regression test suite covering schema validation, split isolation, and deterministic manifests:
 ```bash
-python datasets/MELD/prepare_dataset.py --meld-raw-dir "datasets/MELD/raw" --include-transcript-text
+python -m unittest discover -s datasets/CMU-MOSEI/tests -v
 ```
 
 ---
 
 ## 6. Research Notice & Citations
 
-The media clips in MELD are derived from the television show *Friends* (Warner Bros. Entertainment) and are utilized under fair-use for non-commercial academic research. In accordance with data governance policies, raw audio/video files, feature dumps, and third-party annotation files are not hosted in this Git repository.
+All raw media files, large precomputed feature matrices (`.npy`, `.h5`, `.csd`), and third-party transcripts are excluded from version control in compliance with academic data governance policies and copyright considerations.
 
-### Academic Citation
+### Academic Citations
+
 ```bibtex
 @inproceedings{poria-etal-2019-meld,
     title = "{MELD}: A Multimodal Multi-Party Dataset for Emotion Recognition in Conversations",
-    author = "Poria, Soujanya  and
-      Hazarika, Devamanyu  and
-      Majumder, Navonil  and
-      Gautam, Gautam  and
-      Chhaya, Niyati  and
-      Cambria, Erik",
+    author = "Poria, Soujanya and Hazarika, Devamanyu and Majumder, Navonil and Gautam, Gautam and Chhaya, Niyati and Cambria, Erik",
     booktitle = "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics",
     month = jul,
     year = "2019",
@@ -137,5 +161,18 @@ The media clips in MELD are derived from the television show *Friends* (Warner B
     url = "https://aclanthology.org/P19-1050",
     doi = "10.18653/v1/P19-1050",
     pages = "527--536"
+}
+
+@inproceedings{zadeh2018multimodal,
+    title = "Multimodal Language Analysis in the Wild: {CMU-MOSEI} Dataset and Interpretable Dynamic Fusion Approaches",
+    author = "Zadeh, AmirAli Bagher and Liang, Paul Pu and Poria, Soujanya and Cambria, Erik and Morency, Louis-Philippe",
+    booktitle = "Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)",
+    month = jul,
+    year = "2018",
+    address = "Melbourne, Australia",
+    publisher = "Association for Computational Linguistics",
+    url = "https://aclanthology.org/P18-1208",
+    doi = "10.18653/v1/P18-1208",
+    pages = "2236--2246"
 }
 ```

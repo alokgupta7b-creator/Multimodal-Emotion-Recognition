@@ -251,6 +251,17 @@ audio/
 datasets/MELD/annotations/*.csv
 !datasets/MELD/annotations/.gitkeep
 
+# CMU-MOSEI annotations, raw downloads, and features (unversioned in git)
+datasets/CMU-MOSEI/data/
+datasets/CMU-MOSEI/data/**
+datasets/CMU-MOSEI/annotations/*.csv
+!datasets/CMU-MOSEI/annotations/.gitkeep
+datasets/CMU-MOSEI/features/
+datasets/CMU-MOSEI/features/**
+
+# Computational Sequence Dataset (.csd) files from CMU-MultimodalSDK
+*.csd
+
 # Feature extraction arrays and dumps
 *.npy
 *.npz
