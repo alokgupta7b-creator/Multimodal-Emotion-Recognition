@@ -218,3 +218,57 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ==============================================================================
+# Multimodal Emotion Recognition - Dataset, Media, Feature & Model Exclusions
+# ==============================================================================
+
+# Raw media files and archives (strictly prohibited in git)
+*.tar.gz
+*.tar
+*.zip
+*.7z
+*.rar
+*.mp4
+*.avi
+*.mkv
+*.mov
+*.wav
+*.mp3
+*.flac
+*.aac
+*.ogg
+
+# Dataset raw media and extracted audio storage
+datasets/**/raw/
+datasets/**/raw/**
+datasets/**/audio/
+datasets/**/audio/**
+audio/
+**/audio/
+
+# MELD Annotation CSVs (obtained locally via download_dataset.ps1; unversioned in git)
+datasets/MELD/annotations/*.csv
+!datasets/MELD/annotations/.gitkeep
+
+# Feature extraction arrays and dumps
+*.npy
+*.npz
+*.h5
+*.hdf5
+*.parquet
+*.feather
+features/
+**/features/
+
+# Model checkpoints and weights
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.safetensors
+*.onnx
+models/
+**/models/
+checkpoints/
+**/checkpoints/
