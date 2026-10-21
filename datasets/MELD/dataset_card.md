@@ -94,5 +94,5 @@ The dataset provides official, isolated partitions by complete dialogues to ensu
 - **Redistribution Status & Governance**:
   - The video and audio recordings are provided under fair-use for academic research purposes.
   - Because redistribution permission was not sufficiently established for public GitHub hosting, neither the raw audiovisual recordings nor the third-party annotation CSV files are tracked in this repository.
-  - Teammates must download annotations and media directly from official sources (`https://affective-meld.github.io/` or `https://github.com/declare-lab/MELD`) into local workspace directories.
+  - Users and researchers must download annotations and media directly from official sources (`https://affective-meld.github.io/` or `https://github.com/declare-lab/MELD`) into local workspace directories.
   - Commercial exploitation or re-hosting of raw media archives on public Git repositories without permission is strictly prohibited.

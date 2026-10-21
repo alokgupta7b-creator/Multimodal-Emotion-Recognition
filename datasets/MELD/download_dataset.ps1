@@ -3,7 +3,7 @@
     MELD Dataset Download, Verification, and Safe Extraction Script for Windows PowerShell
 .DESCRIPTION
     Automates the acquisition and verification of the MELD (Multimodal EmotionLines Dataset)
-    for team members. Downloads official annotation CSVs directly from upstream Declare Lab,
+    for researchers and developers. Downloads official annotation CSVs directly from upstream Declare Lab,
     verifies local raw media folders or archives, and safely unpacks official .tar.gz archives
     if present locally, with path traversal prevention and overwrite safeguards.
 .PARAMETER TargetDir
@@ -199,7 +199,7 @@ if (-not $allSplitsReady -and -not $SkipMedia) {
     Write-Host "`n[!] Notice on MELD Media Download:" -ForegroundColor Yellow
     Write-Host "    Because redistribution permission is not established for public Git hosting,"
     Write-Host "    media archives are not hosted directly in this repository."
-    Write-Host "`n    Teammates can download the official raw media archives from:"
+    Write-Host "`n    Users and researchers can download the official raw media archives from:"
     Write-Host "    - Hugging Face: https://huggingface.co/datasets/declare-lab/MELD"
     Write-Host "    - Official Site: https://affective-meld.github.io/"
     Write-Host "    - Archives: train.tar.gz (~7.8 GB), dev.tar.gz (~776 MB), test.tar.gz (~2.2 GB)"
@@ -212,6 +212,6 @@ Write-Host "`n================================================================="
 Write-Host "Next Steps:" -ForegroundColor Cyan
 Write-Host "1. To run preprocessing on local raw media in datasets/MELD/raw:" -ForegroundColor White
 Write-Host "   python datasets/MELD/prepare_dataset.py --meld-raw-dir `"$RawDir`"" -ForegroundColor Yellow
-Write-Host "2. Or to run against custom workspace storage (e.g. EmotionProject):" -ForegroundColor White
-Write-Host "   python datasets/MELD/prepare_dataset.py --meld-raw-dir `"C:\path\to\MELD.Raw`" --audio-dir `"C:\path\to\audio`"" -ForegroundColor Yellow
+Write-Host "2. Or to run against custom external storage:" -ForegroundColor White
+Write-Host "   python datasets/MELD/prepare_dataset.py --meld-raw-dir `"path\to\MELD.Raw`" --audio-dir `"path\to\audio`"" -ForegroundColor Yellow
 Write-Host "=================================================================" -ForegroundColor Cyan

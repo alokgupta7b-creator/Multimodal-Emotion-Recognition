@@ -24,12 +24,12 @@ This directory contains the dataset preparation module, reproducible preprocessi
 ### Why MELD Was Selected for This Project
 1. **Multi-Party Conversational Context**: Unlike dyadic (2-person) datasets such as IEMOCAP, MELD features realistic multi-speaker dialogues with frequent emotional transitions, interruptions, and contextual inter-dependencies.
 2. **True Modality Alignment**: Every utterance in the official annotation files contains synchronized start and end timestamps matching segmented media clips.
-3. **Synergy Across Team Roles**:
-   - **Abhishek (Text Emotion Recognition)**: Utilizes the textual utterance tokens and conversational turn history.
-   - **Pavan (Facial Emotion Recognition)**: Extracts facial bounding boxes, landmarks, and spatial-temporal representations from the video frames.
-   - **Harshith (Dataset Alignment, Speech Emotion Recognition, Audio Extraction & Evaluation)**: Leverages acoustic features (MFCCs, spectral properties, speech pitch/energy) and maintains data integrity.
-   - **Alok (Reliability & Multimodal Fusion)**: Evaluates unimodal confidence, cross-modal consistency, and late/hybrid fusion.
-   - **Bhavanth (Integration)**: Coordinates end-to-end pipeline deployment and inferencing.
+3. **Multimodal Branch Alignment**:
+   - **Text Branch**: Extracts linguistic tokens and conversational history to capture semantic dialogue context.
+   - **Facial Feature Branch**: Extracts face bounding boxes, facial action units/landmarks, and spatial-temporal representations from visual frames.
+   - **Speech Feature Branch**: Extracts acoustic features (MFCCs, spectral descriptors, pitch, and energy) aligned to conversational turns.
+   - **Robust Feature Fusion**: Estimates unimodal reliability and cross-modal consistency before combining representations.
+   - **System Integration**: Provides standardized inference interfaces and evaluation pipelines across all modalities.
 
 ---
 
@@ -69,7 +69,7 @@ This directory contains the dataset preparation module, reproducible preprocessi
 > **Data Governance & Repository Policy**:
 > - The video and audio recordings in MELD are derived from the television show *Friends* (Warner Bros. Entertainment / Bright/Kauffman/Crane Productions).
 > - **Redistribution Terms**: Because explicit redistribution permission for this public repository was not sufficiently established, raw MP4 clips, WAV extractions, nested archives, model checkpoints, and third-party annotation CSV files are **not tracked in Git**.
-> - **How Teammates Obtain Annotations**: Teammates can automatically download the official source annotation CSV files into `datasets/MELD/annotations/` using the included utility `download_dataset.ps1`, or obtain them directly from the official upstream Declare Lab repository (`https://raw.githubusercontent.com/declare-lab/MELD/master/data/MELD/`).
+> - **How to Obtain Annotations**: Users and researchers can automatically download the official source annotation CSV files into `datasets/MELD/annotations/` using the included utility `download_dataset.ps1`, or obtain them directly from the official upstream Declare Lab repository (`https://raw.githubusercontent.com/declare-lab/MELD/master/data/MELD/`).
 > - The directory `datasets/MELD/annotations/` is preserved via `.gitkeep`, and `.gitignore` prevents local annotation CSVs from being accidentally committed.
 
 ---
@@ -103,7 +103,7 @@ datasets/MELD/
 
 ---
 
-## 5. Teammate Setup Guide (Windows)
+## 5. Quickstart & Setup Guide (Windows)
 
 ### Step 1: Clone Repository
 ```powershell
@@ -129,12 +129,12 @@ Execute `prepare_dataset.py` with Python 3.10+:
 # Standard run (produces clean manifests without copyrighted transcript text)
 py datasets/MELD/prepare_dataset.py --meld-raw-dir "datasets/MELD/raw"
 
-# Or pointing to custom storage (e.g., Harshith's local environment)
+# Or pointing to custom storage
 py datasets/MELD/prepare_dataset.py `
-    --meld-raw-dir "C:\Users\Harshith S R\Documents\EmotionProject\datasets\MELD\MELD.Raw" `
-    --audio-dir "C:\Users\Harshith S R\Documents\EmotionProject\audio"
+    --meld-raw-dir "path/to/MELD.Raw" `
+    --audio-dir "path/to/audio"
 
-# For teammates who need dialogue transcripts (e.g., Abhishek for Text Emotion Recognition):
+# To include dialogue transcripts for text-based emotion recognition experiments:
 py datasets/MELD/prepare_dataset.py `
     --meld-raw-dir "datasets/MELD/raw" `
     --include-transcript-text

@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-10-21T18:37:09.150030",
-  "meld_raw_dir": "C:\\Users\\Harshith S R\\Documents\\EmotionProject\\datasets\\MELD\\MELD.Raw",
-  "audio_dir": "C:\\Users\\Harshith S R\\Documents\\EmotionProject\\audio",
+  "generated_at": "2026-10-21T19:01:19.393671",
+  "meld_raw_dir": ".../MELD.Raw",
+  "audio_dir": ".../audio",
   "splits": {
     "train": {
       "split": "train",

@@ -11,9 +11,9 @@ and produces deterministic, reproducible manifests and validation reports.
 
 Usage:
     python prepare_dataset.py \
-        --meld-raw-dir "C:/path/to/MELD.Raw" \
-        --audio-dir "C:/path/to/audio" \
-        --output-dir "."
+        --meld-raw-dir "datasets/MELD/raw" \
+        --audio-dir "datasets/MELD/audio" \
+        --output-dir "datasets/MELD"
 """
 
 import argparse
@@ -393,6 +393,17 @@ def write_manifest(manifest_rows: List[Dict[str, Any]], out_path: Path) -> None:
             writer.writerow(row)
 
 
+def sanitize_path_display(path_str: Optional[str]) -> str:
+    """Sanitizes file paths to avoid leaking user profile directories in public reports."""
+    if not path_str or path_str == "None":
+        return "Not Provided"
+    p = Path(path_str)
+    try:
+        return p.resolve().relative_to(Path.cwd()).as_posix()
+    except (ValueError, RuntimeError):
+        return f".../{p.name}"
+
+
 def write_reports(
     all_stats: Dict[str, Any],
     reports_dir: Path,
@@ -401,6 +412,9 @@ def write_reports(
 ) -> None:
     """Writes both JSON and Markdown preprocessing reports and an exclusions CSV."""
     reports_dir.mkdir(parents=True, exist_ok=True)
+
+    sanitized_raw = sanitize_path_display(dataset_raw_path)
+    sanitized_audio = sanitize_path_display(audio_path)
 
     # 1. JSON Report
     json_path = reports_dir / "preprocessing_report.json"
@@ -431,8 +445,8 @@ def write_reports(
     with open(md_path, "w", encoding="utf-8", newline="\n") as f:
         f.write("# MELD Dataset Preprocessing & Validation Report\n\n")
         f.write(f"- **Generated At**: `{timestamp}`\n")
-        f.write(f"- **Raw Media Source**: `{dataset_raw_path}`\n")
-        f.write(f"- **Audio Source**: `{audio_path or 'Not Checked'}`\n\n")
+        f.write(f"- **Raw Media Source**: `{sanitized_raw}`\n")
+        f.write(f"- **Audio Source**: `{sanitized_audio}`\n\n")
 
         f.write("## 1. Split Summary & Baseline Alignment\n\n")
         f.write("| Split | Annotations | Usable Multimodal | Missing Media | Corrupted Media | Missing Audio | Excluded |\n")
@@ -489,7 +503,7 @@ def main():
     parser.add_argument(
         "--meld-raw-dir",
         type=str,
-        default=r"C:\Users\Harshith S R\Documents\EmotionProject\datasets\MELD\MELD.Raw",
+        default="datasets/MELD/raw",
         help="Path to raw MELD directory containing unpacked split folders or archives",
     )
     parser.add_argument(
@@ -501,7 +515,7 @@ def main():
     parser.add_argument(
         "--audio-dir",
         type=str,
-        default=r"C:\Users\Harshith S R\Documents\EmotionProject\audio",
+        default=None,
         help="Optional directory containing pre-extracted audio WAV splits",
     )
     parser.add_argument(
@@ -547,8 +561,8 @@ def main():
     splits = ["train", "dev", "test"]
     all_stats: Dict[str, Any] = {
         "generated_at": datetime.now().isoformat(),
-        "meld_raw_dir": str(raw_dir) if raw_dir else None,
-        "audio_dir": str(audio_dir) if audio_dir else None,
+        "meld_raw_dir": sanitize_path_display(str(raw_dir) if raw_dir else None),
+        "audio_dir": sanitize_path_display(str(audio_dir) if audio_dir else None),
         "splits": {},
     }
 
