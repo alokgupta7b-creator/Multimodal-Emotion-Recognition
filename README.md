@@ -176,3 +176,41 @@ All raw media files, large precomputed feature matrices (`.npy`, `.h5`, `.csd`),
     pages = "2236--2246"
 }
 ```
+---
+
+## Text Emotion Recognition Module
+
+This module predicts emotions from text using TF-IDF feature extraction and Logistic Regression.
+
+### Features
+- Text preprocessing and cleaning.
+- TF-IDF feature extraction using unigrams and bigrams.
+- Model training using the `dair-ai/emotion` dataset.
+- Prediction of six emotions: sadness, joy, love, anger, fear, and surprise.
+- Evaluation using accuracy, precision, recall, and F1-score.
+
+### Installation
+
+```bash
+python -m pip install datasets scikit-learn joblib
+```
+
+### Train the Model
+
+```bash
+python -m text_emotion.train
+```
+
+### Predict an Emotion
+
+```bash
+python -m text_emotion.predict
+```
+
+Enter a sentence when prompted. Type `exit` to stop.
+
+### Initial Results
+
+The initial test run achieved **83.35% accuracy** on 2,000 test samples. Performance varies across emotion classes, and further improvements may be needed.
+
+**Note:** The trained model is generated locally and is not included in Git version control.
