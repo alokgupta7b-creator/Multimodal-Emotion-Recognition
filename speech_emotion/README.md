@@ -1,8 +1,8 @@
-# speech_emotion — Audio Preprocessing and Acoustic Feature Extraction (Task 4)
+# speech_emotion — Audio Preprocessing, Acoustic Feature Extraction & SER Model (Tasks 4 & 5)
 
-A dedicated, self-contained module for **speech audio validation, preprocessing, and acoustic feature extraction** for Multimodal Emotion Recognition research.
+A dedicated, self-contained module for **speech audio validation, preprocessing, acoustic feature extraction, and modular Speech Emotion Recognition (SER)** for Multimodal Emotion Recognition research.
 
-This module completes **Task 4: Audio Preprocessing and Feature Extraction**. It operates independently of dataset acquisition scripts and model training pipelines.
+This module completes **Task 4 (Audio Preprocessing and Feature Extraction)** and **Task 5 (Speech Emotion Recognition Model Development)**. It provides modular acoustic feature extraction and a standardized classifier interface ready for dynamic reliability estimation and multimodal fusion.
 
 ---
 
@@ -10,12 +10,12 @@ This module completes **Task 4: Audio Preprocessing and Feature Extraction**. It
 
 The primary research objective of this repository is to develop a dynamic reliability and consistency estimation mechanism across text, speech, and facial modalities prior to fusion.
 
-Before audio signals can be consumed by downstream acoustic emotion encoders or multimodal fusion networks, raw conversational speech recordings must be:
+Before audio signals can be consumed by downstream multimodal fusion networks, conversational speech recordings must be:
 1. **Validated** for file existence, valid audio headers, finite numerical values (no NaN/Inf), non-zero length, and non-silent signal content.
 2. **Standardized** to mono channel format and a consistent target sampling rate (16 kHz).
 3. **Represented** using noise-robust acoustic feature descriptors (Mel-Frequency Cepstral Coefficients, MFCCs) with utterance-level temporal pooling.
-4. **Aligned** strictly to source dialogue turns and ground-truth emotion labels without random repartitioning or cross-split leakage.
-5. **Audited** with machine-readable JSON, Markdown logs, and per-sample exclusion records.
+4. **Classified** into the 7 canonical MELD emotion classes with class probability estimation.
+5. **Decoupled** from dataset-specific paths so the prediction interface can be integrated directly with multimodal fusion pipelines.
 
 ---
 
@@ -30,11 +30,18 @@ speech_emotion/
 ├── audio_loader.py         # Native WAV decoder, channel downmix, resampling & validation
 ├── feature_extraction.py   # MFCC feature extractor (dual-engine: NumPy & librosa)
 ├── preprocess_audio.py     # Dataset integration, batch processor, deduplication & reports
+├── model/
+│   ├── __init__.py         # Model package exports
+│   ├── classifier.py       # SERClassifier pipeline (StandardScaler + LogisticRegression)
+│   ├── label_mapping.py    # MELDLabelEncoder for 7 canonical emotion classes
+│   └── predict.py          # SERPrediction and inference interfaces
 └── tests/
     ├── __init__.py
     ├── test_audio_loader.py        # Audio loader, stereo downmix, and corruption tests
     ├── test_feature_extraction.py  # MFCC 40-feature shape, math, and consistency tests
-    └── test_preprocess_audio.py    # Manifest parsing, duplicate & failure audit tests
+    ├── test_preprocess_audio.py    # Manifest parsing, duplicate & failure audit tests
+    ├── test_label_mapping.py       # 7-class label mapping and validation tests
+    └── test_model.py               # Model training, prediction, probabilities, serialization
 ```
 
 ---
@@ -60,7 +67,7 @@ speech_emotion/
   - Total feature dimension: **40 scalar features per utterance**.
 - **Dual-Engine Design**:
   - `auto`: Automatically uses `librosa` if installed in the environment; otherwise seamlessly falls back to the native high-precision pure NumPy engine.
-  - `numpy`: High-precision Slaney Mel filterbank (128 bands, 0 to 8000 Hz), STFT power spectrum with periodic Hann window and reflection padding, logarithmic compression, and orthogonal DCT-II.
+  - `numpy`: High-precision Slaney Mel filterbank (128 bands, 0 to 8000 Hz), STFT power spectrum with periodic Hann window and zero padding, logarithmic compression, and orthogonal DCT-II.
   - `librosa`: Direct call to `librosa.feature.mfcc` for exact floating-point compatibility with previous baseline runs.
 
 ### 3.3 Dataset Integration & Auditing (`preprocess_audio.py`)
@@ -118,14 +125,93 @@ Human-readable Markdown audit report with formatted summary tables.
 
 ---
 
-## 6. How to Run
+## 6. Speech Emotion Recognition (SER) Model Architecture (Task 5)
 
-### 6.1 Running Unit Tests
+The `speech_emotion/model/` subpackage implements a modular, reproducible acoustic emotion classifier.
 
-The test suite uses synthetic audio fixtures and requires no downloaded datasets:
+### 6.1 Seven MELD Emotion Classes
+MELD uses seven canonical emotion classes represented in deterministic alphabetical order:
+1. `anger` (index 0)
+2. `disgust` (index 1)
+3. `fear` (index 2)
+4. `joy` (index 3)
+5. `neutral` (index 4)
+6. `sadness` (index 5)
+7. `surprise` (index 6)
+
+Label encoding and decoding are managed deterministically by `MELDLabelEncoder`. Unknown, missing, or malformed labels raise an informative `ValueError`.
+
+### 6.2 Model Architecture & Pipeline
+The SER model (`SERClassifier`) employs a scikit-learn pipeline:
+- **Feature Standardization**: `StandardScaler()` fits zero-mean, unit-variance normalization on the 40-dimensional feature vector.
+- **Linear Classifier**: `LogisticRegression` with:
+  - `class_weight='balanced'` to compensate for severe class imbalance in conversational emotion data (e.g., neutral dominance).
+  - `max_iter=2000` to provide a generous iteration budget for solver convergence on normalized features.
+  - `random_state=42` for exact reproducibility.
+  - `solver='lbfgs'`.
+
+### 6.3 Construction and Training
+
+```python
+from speech_emotion.model import SERClassifier, SERConfig
+
+# Construct classifier with custom or default configuration
+config = SERConfig(
+    class_weight="balanced",
+    max_iter=2000,
+    C=1.0,
+    random_state=42,
+)
+model = SERClassifier(config=config)
+
+# Fit on 40-dimensional feature matrix X and string labels y
+model.fit(X_train, y_train)
+```
+
+### 6.4 Inference and Prediction Interface
+The prediction interface is independent of dataset file paths:
+
+```python
+from speech_emotion.model import predict_emotion, predict_from_audio, SERClassifier
+
+# 1. Load trained artifact (only from trusted sources)
+model = SERClassifier.load("path/to/speech_model.joblib")
+
+# 2. Predict from a 40-dimensional feature vector
+prediction = predict_emotion(model, feature_vector)
+print("Predicted Emotion:", prediction.predicted_label)
+print("Confidence:", prediction.confidence)
+print("Probabilities:", prediction.probabilities)
+
+# 3. Convenience: predict directly from WAV audio file (uses exact Task 4 MFCC configuration)
+prediction = predict_from_audio(model, "path/to/utterance.wav")
+```
+
+The output `SERPrediction` object provides:
+- `predicted_label` (str): top predicted emotion name.
+- `predicted_index` (int): integer index [0..6].
+- `confidence` (float): probability of the top class.
+- `probabilities` (dict): mapping from class name to probability score, ordered canonically.
+- `probability_array` (np.ndarray): 1D float array of shape `(7,)` summing to 1.0.
+
+### 6.5 Model Artifact Persistence
+- Save: `model.save("path/to/model.joblib", overwrite=False)`
+- Load: `model = SERClassifier.load("path/to/model.joblib")`
+Model artifacts serialize the fitted pipeline, configuration dataclass, and canonical label ordering.
+
+> [!WARNING]
+> **Security Notice**: Model loading uses `joblib.load` (pickle deserialization). Only load model artifacts from trusted sources to prevent arbitrary code execution risks. Incompatible or malformed files are strictly validated and rejected.
+
+---
+
+## 7. How to Run
+
+### 7.1 Running Unit Tests
+
+The test suite uses synthetic audio and feature fixtures and requires no external data downloads:
 
 ```bash
-# Run all speech_emotion tests (35 tests)
+# Run all speech_emotion tests (59 tests)
 python -m unittest discover -s speech_emotion/tests -p "test_*.py" -v
 
 # Run existing repository regression tests
@@ -133,7 +219,7 @@ python -m unittest discover -s preprocessing/tests -p "test_*.py" -v
 python -m unittest discover -s datasets/CMU-MOSEI/tests -p "test_*.py" -v
 ```
 
-### 6.2 Extracting Features on MELD Splits
+### 7.2 Extracting Features on MELD Splits
 
 ```bash
 # Process all splits (train, dev, test)
@@ -154,9 +240,9 @@ python -m speech_emotion \
 
 ---
 
-## 7. Verification & Accounting Summary
+## 8. Verification & Accounting Summary
 
-### 7.1 MELD Full-Dataset Verification Accounting
+### 8.1 MELD Full-Dataset Verification Accounting
 
 | Split | Total Annotations | Available Audio | Valid Features | Excluded | Exclusion Breakdown |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -165,7 +251,7 @@ python -m speech_emotion \
 | **Test** | 2,610 | 2,610 | **2,606** | 4 | 0 missing, 2 silent, 2 duration $>60$s |
 | **Total** | 13,708 | 13,706 | **13,682** | 26 | 2 missing audio, 8 silent, 14 duration $<0.1$s, 2 duration $>60$s |
 
-### 7.2 Numerical Comparison with Existing MFCC Baseline
+### 8.2 Numerical Comparison with Existing MFCC Baseline
 
 Comparison of features extracted by `speech_emotion` against existing MELD MFCC artifacts across all 1,105 aligned development utterances:
 - **Columns & Schema**: 100% identical (43 columns: 3 metadata + 40 features).
@@ -176,3 +262,14 @@ Comparison of features extracted by `speech_emotion` against existing MELD MFCC 
   - Overall Median Absolute Error: $3.81 \times 10^{-6}$.
   - Overall Root Mean Squared Error (RMSE): $1.36 \times 10^{-5}$.
   - Overall Maximum Absolute Error: $1.22 \times 10^{-4}$ (within float32 precision limits).
+
+---
+
+## 9. Next Steps (Task 6)
+
+Task 5 delivers the modular SER model architecture, label mapping, and prediction interfaces.
+Subsequent model training and evaluation (Task 6) will address:
+1. Training the SER model on the complete MELD training split feature matrix (9,971 samples).
+2. Evaluating development split metrics (accuracy, macro F1, weighted F1, per-class precision/recall).
+3. Computing the development split confusion matrix.
+4. Serializing final verified model weights and evaluation reports outside Git tracking.

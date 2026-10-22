@@ -32,6 +32,16 @@ from speech_emotion.preprocess_audio import (
     load_manifest_records,
     process_split,
 )
+from speech_emotion.model import (
+    MELDLabelEncoder,
+    MELD_CLASS_NAMES,
+    NUM_MELD_CLASSES,
+    SERClassifier,
+    SERConfig,
+    SERPrediction,
+    predict_emotion,
+    predict_from_audio,
+)
 
 __version__ = "0.1.0"
 
@@ -41,14 +51,22 @@ __all__ = [
     "AudioMetadata",
     "AuditReport",
     "DEFAULT_SAMPLE_RATE",
+    "MELDLabelEncoder",
+    "MELD_CLASS_NAMES",
     "MELD_EMOTIONS",
     "MELD_SPLITS",
     "MFCCExtractor",
+    "NUM_MELD_CLASSES",
+    "SERClassifier",
+    "SERConfig",
+    "SERPrediction",
     "TOTAL_MFCC_FEATURES",
     "create_mel_filterbank",
     "extract_mfcc_features",
     "load_audio",
     "load_manifest_records",
+    "predict_emotion",
+    "predict_from_audio",
     "process_split",
     "resample_signal",
     "validate_audio_signal",
