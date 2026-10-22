@@ -1,0 +1,269 @@
+{
+  "dataset": "MELD",
+  "split": "test",
+  "num_samples": 2610,
+  "selected_model": {
+    "model_name": "ser_best_model (logreg_balanced_C0.01)",
+    "split_name": "test",
+    "num_samples": 2610,
+    "accuracy": 0.2318,
+    "balanced_accuracy": 0.2323,
+    "macro_f1": 0.1917,
+    "weighted_f1": 0.2676,
+    "macro_precision": 0.2198,
+    "macro_recall": 0.2323,
+    "classes": [
+      "anger",
+      "disgust",
+      "fear",
+      "joy",
+      "neutral",
+      "sadness",
+      "surprise"
+    ],
+    "per_class_metrics": {
+      "anger": {
+        "precision": 0.2569,
+        "recall": 0.2986,
+        "f1-score": 0.2761,
+        "support": 345
+      },
+      "disgust": {
+        "precision": 0.0304,
+        "recall": 0.1912,
+        "f1-score": 0.0525,
+        "support": 68
+      },
+      "fear": {
+        "precision": 0.0404,
+        "recall": 0.22,
+        "f1-score": 0.0683,
+        "support": 50
+      },
+      "joy": {
+        "precision": 0.2414,
+        "recall": 0.209,
+        "f1-score": 0.224,
+        "support": 402
+      },
+      "neutral": {
+        "precision": 0.6194,
+        "recall": 0.2189,
+        "f1-score": 0.3235,
+        "support": 1256
+      },
+      "sadness": {
+        "precision": 0.1229,
+        "recall": 0.25,
+        "f1-score": 0.1648,
+        "support": 208
+      },
+      "surprise": {
+        "precision": 0.2271,
+        "recall": 0.2384,
+        "f1-score": 0.2326,
+        "support": 281
+      }
+    },
+    "confusion_matrix": [
+      [
+        103,
+        54,
+        36,
+        37,
+        30,
+        48,
+        37
+      ],
+      [
+        20,
+        13,
+        9,
+        4,
+        5,
+        11,
+        6
+      ],
+      [
+        10,
+        7,
+        11,
+        4,
+        6,
+        8,
+        4
+      ],
+      [
+        72,
+        67,
+        26,
+        84,
+        59,
+        59,
+        35
+      ],
+      [
+        127,
+        222,
+        134,
+        159,
+        275,
+        211,
+        128
+      ],
+      [
+        33,
+        20,
+        24,
+        25,
+        36,
+        52,
+        18
+      ],
+      [
+        36,
+        44,
+        32,
+        35,
+        33,
+        34,
+        67
+      ]
+    ],
+    "training_duration_sec": null,
+    "inference_latency_ms_per_sample": 0.004,
+    "model_size_bytes": 5127
+  },
+  "baseline_model": {
+    "model_name": "ser_baseline_logreg (logreg_balanced_C1.0)",
+    "split_name": "test",
+    "num_samples": 2610,
+    "accuracy": 0.2245,
+    "balanced_accuracy": 0.2245,
+    "macro_f1": 0.1867,
+    "weighted_f1": 0.26,
+    "macro_precision": 0.217,
+    "macro_recall": 0.2245,
+    "classes": [
+      "anger",
+      "disgust",
+      "fear",
+      "joy",
+      "neutral",
+      "sadness",
+      "surprise"
+    ],
+    "per_class_metrics": {
+      "anger": {
+        "precision": 0.2577,
+        "recall": 0.2899,
+        "f1-score": 0.2729,
+        "support": 345
+      },
+      "disgust": {
+        "precision": 0.0284,
+        "recall": 0.1765,
+        "f1-score": 0.049,
+        "support": 68
+      },
+      "fear": {
+        "precision": 0.0332,
+        "recall": 0.2,
+        "f1-score": 0.057,
+        "support": 50
+      },
+      "joy": {
+        "precision": 0.2432,
+        "recall": 0.2214,
+        "f1-score": 0.2318,
+        "support": 402
+      },
+      "neutral": {
+        "precision": 0.6181,
+        "recall": 0.2062,
+        "f1-score": 0.3093,
+        "support": 1256
+      },
+      "sadness": {
+        "precision": 0.1259,
+        "recall": 0.25,
+        "f1-score": 0.1675,
+        "support": 208
+      },
+      "surprise": {
+        "precision": 0.2126,
+        "recall": 0.2278,
+        "f1-score": 0.2199,
+        "support": 281
+      }
+    },
+    "confusion_matrix": [
+      [
+        100,
+        53,
+        40,
+        38,
+        29,
+        49,
+        36
+      ],
+      [
+        20,
+        12,
+        10,
+        4,
+        6,
+        10,
+        6
+      ],
+      [
+        9,
+        9,
+        10,
+        2,
+        5,
+        10,
+        5
+      ],
+      [
+        67,
+        65,
+        36,
+        89,
+        56,
+        56,
+        33
+      ],
+      [
+        124,
+        221,
+        143,
+        170,
+        259,
+        203,
+        136
+      ],
+      [
+        31,
+        20,
+        24,
+        26,
+        34,
+        52,
+        21
+      ],
+      [
+        37,
+        42,
+        38,
+        37,
+        30,
+        33,
+        64
+      ]
+    ],
+    "training_duration_sec": null,
+    "inference_latency_ms_per_sample": 0.004,
+    "model_size_bytes": 5127
+  }
+}

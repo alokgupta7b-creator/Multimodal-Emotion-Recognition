@@ -1,0 +1,12 @@
+video_id,clip_id,start_time,end_time,text,sentiment,happy,sad,anger,surprise,disgust,fear,split
+vid_train_001,0,0.50,4.25,This research framework evaluates multimodal consistency.,1.67,1.33,0.0,0.0,0.33,0.0,0.0,train
+vid_train_001,1,4.50,8.10,Dynamic weighting improves fusion under degraded sensory inputs.,0.67,0.67,0.0,0.0,0.0,0.0,0.0,train
+vid_train_002,0,1.20,5.80,The acoustic branch extracts robust prosodic descriptors.,-0.33,0.0,0.33,0.33,0.0,0.0,0.0,train
+vid_train_002,1,6.00,9.40,Unimodal uncertainty is estimated before cross-modal alignment.,0.0,0.0,0.0,0.0,0.0,0.0,0.0,train
+vid_dev_001,0,0.20,3.90,Evaluation on validation benchmarks shows stable convergence.,1.33,1.0,0.0,0.0,0.0,0.0,0.0,dev
+vid_dev_001,1,4.10,7.60,Sensor noise causes degraded confidence in facial feature channels.,-1.67,0.0,1.33,0.67,0.0,0.33,0.0,dev
+vid_test_001,0,0.80,4.50,Testing generalization across independent speakers is critical.,0.33,0.33,0.0,0.0,0.0,0.0,0.0,test
+vid_test_001,1,4.90,9.20,Extreme environmental interference reduces unimodal reliability.,-2.33,0.0,2.0,1.0,0.0,0.67,0.33,test
+vid_err_sent,0,0.00,3.00,This sample has an invalid sentiment score beyond official range.,4.50,0.0,0.0,0.0,0.0,0.0,0.0,train
+vid_err_time,0,5.00,2.00,This sample has invalid inverted timestamps.,0.50,0.33,0.0,0.0,0.0,0.0,0.0,dev
+vid_err_emo,0,0.00,2.50,This sample has an invalid negative emotion score.,0.00,-0.5,0.0,0.0,0.0,0.0,0.0,test

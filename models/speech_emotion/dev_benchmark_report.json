@@ -1,0 +1,798 @@
+{
+  "selection_metric": "macro_f1",
+  "best_model": "logreg_balanced_C0.01",
+  "models": {
+    "logreg_balanced_C1.0": {
+      "model_name": "logreg_balanced_C1.0",
+      "split_name": "dev",
+      "num_samples": 1108,
+      "accuracy": 0.2329,
+      "balanced_accuracy": 0.2409,
+      "macro_f1": 0.2044,
+      "weighted_f1": 0.2534,
+      "macro_precision": 0.2369,
+      "macro_recall": 0.2409,
+      "classes": [
+        "anger",
+        "disgust",
+        "fear",
+        "joy",
+        "neutral",
+        "sadness",
+        "surprise"
+      ],
+      "per_class_metrics": {
+        "anger": {
+          "precision": 0.3365,
+          "recall": 0.4641,
+          "f1-score": 0.3901,
+          "support": 153
+        },
+        "disgust": {
+          "precision": 0.0166,
+          "recall": 0.1364,
+          "f1-score": 0.0296,
+          "support": 22
+        },
+        "fear": {
+          "precision": 0.0738,
+          "recall": 0.225,
+          "f1-score": 0.1111,
+          "support": 40
+        },
+        "joy": {
+          "precision": 0.1844,
+          "recall": 0.1595,
+          "f1-score": 0.1711,
+          "support": 163
+        },
+        "neutral": {
+          "precision": 0.6241,
+          "recall": 0.177,
+          "f1-score": 0.2757,
+          "support": 469
+        },
+        "sadness": {
+          "precision": 0.1865,
+          "recall": 0.3243,
+          "f1-score": 0.2368,
+          "support": 111
+        },
+        "surprise": {
+          "precision": 0.2362,
+          "recall": 0.2,
+          "f1-score": 0.2166,
+          "support": 150
+        }
+      },
+      "confusion_matrix": [
+        [
+          71,
+          22,
+          18,
+          13,
+          10,
+          12,
+          7
+        ],
+        [
+          2,
+          3,
+          2,
+          3,
+          1,
+          6,
+          5
+        ],
+        [
+          10,
+          4,
+          9,
+          3,
+          5,
+          2,
+          7
+        ],
+        [
+          35,
+          31,
+          15,
+          26,
+          14,
+          21,
+          21
+        ],
+        [
+          39,
+          88,
+          46,
+          74,
+          83,
+          94,
+          45
+        ],
+        [
+          16,
+          17,
+          10,
+          10,
+          10,
+          36,
+          12
+        ],
+        [
+          38,
+          16,
+          22,
+          12,
+          10,
+          22,
+          30
+        ]
+      ],
+      "training_duration_sec": 0.307,
+      "inference_latency_ms_per_sample": 0.003,
+      "model_size_bytes": 5127
+    },
+    "logreg_unweighted_C1.0": {
+      "model_name": "logreg_unweighted_C1.0",
+      "split_name": "dev",
+      "num_samples": 1108,
+      "accuracy": 0.4531,
+      "balanced_accuracy": 0.1888,
+      "macro_f1": 0.1602,
+      "weighted_f1": 0.3341,
+      "macro_precision": 0.2635,
+      "macro_recall": 0.1888,
+      "classes": [
+        "anger",
+        "disgust",
+        "fear",
+        "joy",
+        "neutral",
+        "sadness",
+        "surprise"
+      ],
+      "per_class_metrics": {
+        "anger": {
+          "precision": 0.4095,
+          "recall": 0.281,
+          "f1-score": 0.3333,
+          "support": 153
+        },
+        "disgust": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1-score": 0.0,
+          "support": 22
+        },
+        "fear": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1-score": 0.0,
+          "support": 40
+        },
+        "joy": {
+          "precision": 0.2333,
+          "recall": 0.0429,
+          "f1-score": 0.0725,
+          "support": 163
+        },
+        "neutral": {
+          "precision": 0.4709,
+          "recall": 0.9488,
+          "f1-score": 0.6294,
+          "support": 469
+        },
+        "sadness": {
+          "precision": 0.5,
+          "recall": 0.009,
+          "f1-score": 0.0177,
+          "support": 111
+        },
+        "surprise": {
+          "precision": 0.2308,
+          "recall": 0.04,
+          "f1-score": 0.0682,
+          "support": 150
+        }
+      },
+      "confusion_matrix": [
+        [
+          43,
+          0,
+          0,
+          6,
+          99,
+          0,
+          5
+        ],
+        [
+          0,
+          0,
+          0,
+          1,
+          20,
+          0,
+          1
+        ],
+        [
+          4,
+          0,
+          0,
+          1,
+          32,
+          0,
+          3
+        ],
+        [
+          15,
+          0,
+          0,
+          7,
+          138,
+          0,
+          3
+        ],
+        [
+          14,
+          0,
+          0,
+          5,
+          445,
+          1,
+          4
+        ],
+        [
+          14,
+          0,
+          0,
+          2,
+          90,
+          1,
+          4
+        ],
+        [
+          15,
+          0,
+          0,
+          8,
+          121,
+          0,
+          6
+        ]
+      ],
+      "training_duration_sec": 0.402,
+      "inference_latency_ms_per_sample": 0.002,
+      "model_size_bytes": 5110
+    },
+    "logreg_balanced_C0.1": {
+      "model_name": "logreg_balanced_C0.1",
+      "split_name": "dev",
+      "num_samples": 1108,
+      "accuracy": 0.2338,
+      "balanced_accuracy": 0.2412,
+      "macro_f1": 0.205,
+      "weighted_f1": 0.2547,
+      "macro_precision": 0.2376,
+      "macro_recall": 0.2412,
+      "classes": [
+        "anger",
+        "disgust",
+        "fear",
+        "joy",
+        "neutral",
+        "sadness",
+        "surprise"
+      ],
+      "per_class_metrics": {
+        "anger": {
+          "precision": 0.3349,
+          "recall": 0.4641,
+          "f1-score": 0.389,
+          "support": 153
+        },
+        "disgust": {
+          "precision": 0.0165,
+          "recall": 0.1364,
+          "f1-score": 0.0294,
+          "support": 22
+        },
+        "fear": {
+          "precision": 0.0744,
+          "recall": 0.225,
+          "f1-score": 0.1118,
+          "support": 40
+        },
+        "joy": {
+          "precision": 0.1857,
+          "recall": 0.1595,
+          "f1-score": 0.1716,
+          "support": 163
+        },
+        "neutral": {
+          "precision": 0.6269,
+          "recall": 0.1791,
+          "f1-score": 0.2786,
+          "support": 469
+        },
+        "sadness": {
+          "precision": 0.1865,
+          "recall": 0.3243,
+          "f1-score": 0.2368,
+          "support": 111
+        },
+        "surprise": {
+          "precision": 0.2381,
+          "recall": 0.2,
+          "f1-score": 0.2174,
+          "support": 150
+        }
+      },
+      "confusion_matrix": [
+        [
+          71,
+          22,
+          18,
+          13,
+          10,
+          12,
+          7
+        ],
+        [
+          3,
+          3,
+          2,
+          3,
+          1,
+          5,
+          5
+        ],
+        [
+          10,
+          5,
+          9,
+          3,
+          5,
+          2,
+          6
+        ],
+        [
+          35,
+          31,
+          14,
+          26,
+          14,
+          22,
+          21
+        ],
+        [
+          39,
+          88,
+          46,
+          73,
+          84,
+          94,
+          45
+        ],
+        [
+          16,
+          17,
+          10,
+          10,
+          10,
+          36,
+          12
+        ],
+        [
+          38,
+          16,
+          22,
+          12,
+          10,
+          22,
+          30
+        ]
+      ],
+      "training_duration_sec": 0.308,
+      "inference_latency_ms_per_sample": 0.003,
+      "model_size_bytes": 5127
+    },
+    "logreg_balanced_C0.01": {
+      "model_name": "logreg_balanced_C0.01",
+      "split_name": "dev",
+      "num_samples": 1108,
+      "accuracy": 0.2365,
+      "balanced_accuracy": 0.2425,
+      "macro_f1": 0.2062,
+      "weighted_f1": 0.2575,
+      "macro_precision": 0.2372,
+      "macro_recall": 0.2425,
+      "classes": [
+        "anger",
+        "disgust",
+        "fear",
+        "joy",
+        "neutral",
+        "sadness",
+        "surprise"
+      ],
+      "per_class_metrics": {
+        "anger": {
+          "precision": 0.3302,
+          "recall": 0.4641,
+          "f1-score": 0.3859,
+          "support": 153
+        },
+        "disgust": {
+          "precision": 0.0165,
+          "recall": 0.1364,
+          "f1-score": 0.0294,
+          "support": 22
+        },
+        "fear": {
+          "precision": 0.075,
+          "recall": 0.225,
+          "f1-score": 0.1125,
+          "support": 40
+        },
+        "joy": {
+          "precision": 0.1969,
+          "recall": 0.1534,
+          "f1-score": 0.1724,
+          "support": 163
+        },
+        "neutral": {
+          "precision": 0.617,
+          "recall": 0.1855,
+          "f1-score": 0.2852,
+          "support": 469
+        },
+        "sadness": {
+          "precision": 0.1888,
+          "recall": 0.3333,
+          "f1-score": 0.241,
+          "support": 111
+        },
+        "surprise": {
+          "precision": 0.2362,
+          "recall": 0.2,
+          "f1-score": 0.2166,
+          "support": 150
+        }
+      },
+      "confusion_matrix": [
+        [
+          71,
+          24,
+          18,
+          10,
+          10,
+          13,
+          7
+        ],
+        [
+          4,
+          3,
+          3,
+          1,
+          1,
+          5,
+          5
+        ],
+        [
+          10,
+          5,
+          9,
+          3,
+          5,
+          2,
+          6
+        ],
+        [
+          37,
+          30,
+          13,
+          25,
+          17,
+          21,
+          20
+        ],
+        [
+          38,
+          87,
+          47,
+          66,
+          87,
+          96,
+          48
+        ],
+        [
+          16,
+          18,
+          10,
+          9,
+          10,
+          37,
+          11
+        ],
+        [
+          39,
+          15,
+          20,
+          13,
+          11,
+          22,
+          30
+        ]
+      ],
+      "training_duration_sec": 0.213,
+      "inference_latency_ms_per_sample": 0.002,
+      "model_size_bytes": 5127
+    },
+    "mlp_relu_balanced": {
+      "model_name": "mlp_relu_balanced",
+      "split_name": "dev",
+      "num_samples": 1108,
+      "accuracy": 0.4495,
+      "balanced_accuracy": 0.2021,
+      "macro_f1": 0.1804,
+      "weighted_f1": 0.3556,
+      "macro_precision": 0.2015,
+      "macro_recall": 0.2021,
+      "classes": [
+        "anger",
+        "disgust",
+        "fear",
+        "joy",
+        "neutral",
+        "sadness",
+        "surprise"
+      ],
+      "per_class_metrics": {
+        "anger": {
+          "precision": 0.4132,
+          "recall": 0.3268,
+          "f1-score": 0.365,
+          "support": 153
+        },
+        "disgust": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1-score": 0.0,
+          "support": 22
+        },
+        "fear": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1-score": 0.0,
+          "support": 40
+        },
+        "joy": {
+          "precision": 0.2222,
+          "recall": 0.1472,
+          "f1-score": 0.1771,
+          "support": 163
+        },
+        "neutral": {
+          "precision": 0.4894,
+          "recall": 0.887,
+          "f1-score": 0.6308,
+          "support": 469
+        },
+        "sadness": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1-score": 0.0,
+          "support": 111
+        },
+        "surprise": {
+          "precision": 0.2857,
+          "recall": 0.0533,
+          "f1-score": 0.0899,
+          "support": 150
+        }
+      },
+      "confusion_matrix": [
+        [
+          50,
+          0,
+          0,
+          13,
+          87,
+          0,
+          3
+        ],
+        [
+          2,
+          0,
+          0,
+          5,
+          14,
+          0,
+          1
+        ],
+        [
+          5,
+          0,
+          0,
+          7,
+          26,
+          0,
+          2
+        ],
+        [
+          15,
+          0,
+          0,
+          24,
+          119,
+          0,
+          5
+        ],
+        [
+          17,
+          0,
+          0,
+          30,
+          416,
+          1,
+          5
+        ],
+        [
+          12,
+          0,
+          0,
+          7,
+          88,
+          0,
+          4
+        ],
+        [
+          20,
+          0,
+          0,
+          22,
+          100,
+          0,
+          8
+        ]
+      ],
+      "training_duration_sec": 2.398,
+      "inference_latency_ms_per_sample": 0.005,
+      "model_size_bytes": 129187
+    },
+    "svm_rbf_balanced_C1.0": {
+      "model_name": "svm_rbf_balanced_C1.0",
+      "split_name": "dev",
+      "num_samples": 1108,
+      "accuracy": 0.2599,
+      "balanced_accuracy": 0.2143,
+      "macro_f1": 0.199,
+      "weighted_f1": 0.2749,
+      "macro_precision": 0.2126,
+      "macro_recall": 0.2143,
+      "classes": [
+        "anger",
+        "disgust",
+        "fear",
+        "joy",
+        "neutral",
+        "sadness",
+        "surprise"
+      ],
+      "per_class_metrics": {
+        "anger": {
+          "precision": 0.2803,
+          "recall": 0.4837,
+          "f1-score": 0.3549,
+          "support": 153
+        },
+        "disgust": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1-score": 0.0,
+          "support": 22
+        },
+        "fear": {
+          "precision": 0.0385,
+          "recall": 0.05,
+          "f1-score": 0.0435,
+          "support": 40
+        },
+        "joy": {
+          "precision": 0.2321,
+          "recall": 0.2393,
+          "f1-score": 0.2356,
+          "support": 163
+        },
+        "neutral": {
+          "precision": 0.55,
+          "recall": 0.2345,
+          "f1-score": 0.3288,
+          "support": 469
+        },
+        "sadness": {
+          "precision": 0.1824,
+          "recall": 0.2793,
+          "f1-score": 0.2206,
+          "support": 111
+        },
+        "surprise": {
+          "precision": 0.2051,
+          "recall": 0.2133,
+          "f1-score": 0.2092,
+          "support": 150
+        }
+      },
+      "confusion_matrix": [
+        [
+          74,
+          16,
+          11,
+          13,
+          15,
+          11,
+          13
+        ],
+        [
+          7,
+          0,
+          0,
+          4,
+          1,
+          5,
+          5
+        ],
+        [
+          14,
+          1,
+          2,
+          2,
+          7,
+          2,
+          12
+        ],
+        [
+          40,
+          10,
+          10,
+          39,
+          29,
+          16,
+          19
+        ],
+        [
+          81,
+          48,
+          14,
+          79,
+          110,
+          84,
+          53
+        ],
+        [
+          21,
+          7,
+          4,
+          9,
+          17,
+          31,
+          22
+        ],
+        [
+          27,
+          16,
+          11,
+          22,
+          21,
+          21,
+          32
+        ]
+      ],
+      "training_duration_sec": 172.803,
+      "inference_latency_ms_per_sample": 2.191,
+      "model_size_bytes": 4180998
+    }
+  }
+}
