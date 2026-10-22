@@ -1,0 +1,15 @@
+{
+  "train": [
+    "vid_train_001",
+    "vid_train_002",
+    "vid_err_sent"
+  ],
+  "dev": [
+    "vid_dev_001",
+    "vid_err_time"
+  ],
+  "test": [
+    "vid_test_001",
+    "vid_err_emo"
+  ]
+}

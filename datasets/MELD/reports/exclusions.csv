@@ -1,0 +1,3 @@
+sample_id,split,dialogue_id,utterance_id,emotion,has_text,has_video,has_audio,video_status,audio_status,exclusion_reason
+train_dia125_utt3,train,125,3,neutral,True,False,False,corrupted_moov_atom_missing,missing_audio,corrupted_video_moov_atom_missing
+dev_dia110_utt7,dev,110,7,neutral,True,False,False,missing_file,missing_audio,missing_video_recording

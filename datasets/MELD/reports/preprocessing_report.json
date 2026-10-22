@@ -1,0 +1,122 @@
+{
+  "generated_at": "2026-10-21T19:01:19.393671",
+  "meld_raw_dir": ".../MELD.Raw",
+  "audio_dir": ".../audio",
+  "splits": {
+    "train": {
+      "split": "train",
+      "annotation_count": 9989,
+      "unique_sample_count": 9989,
+      "duplicate_count": 0,
+      "duplicates": [],
+      "invalid_emotion_count": 0,
+      "invalid_emotions": [],
+      "missing_media_count": 0,
+      "corrupted_media_count": 1,
+      "missing_audio_count": 1,
+      "fully_usable_count": 9988,
+      "excluded_count": 1,
+      "emotion_distribution": {
+        "neutral": 4710,
+        "surprise": 1205,
+        "fear": 268,
+        "sadness": 683,
+        "joy": 1743,
+        "disgust": 271,
+        "anger": 1109
+      },
+      "sentiment_distribution": {
+        "neutral": 4710,
+        "positive": 2334,
+        "negative": 2945
+      },
+      "exclusions": [
+        {
+          "sample_id": "train_dia125_utt3",
+          "split": "train",
+          "dialogue_id": 125,
+          "utterance_id": 3,
+          "emotion": "neutral",
+          "has_text": true,
+          "has_video": false,
+          "has_audio": false,
+          "video_status": "corrupted_moov_atom_missing",
+          "audio_status": "missing_audio",
+          "exclusion_reason": "corrupted_video_moov_atom_missing"
+        }
+      ]
+    },
+    "dev": {
+      "split": "dev",
+      "annotation_count": 1109,
+      "unique_sample_count": 1109,
+      "duplicate_count": 0,
+      "duplicates": [],
+      "invalid_emotion_count": 0,
+      "invalid_emotions": [],
+      "missing_media_count": 1,
+      "corrupted_media_count": 0,
+      "missing_audio_count": 1,
+      "fully_usable_count": 1108,
+      "excluded_count": 1,
+      "emotion_distribution": {
+        "sadness": 111,
+        "surprise": 150,
+        "neutral": 470,
+        "joy": 163,
+        "anger": 153,
+        "disgust": 22,
+        "fear": 40
+      },
+      "sentiment_distribution": {
+        "negative": 406,
+        "neutral": 470,
+        "positive": 233
+      },
+      "exclusions": [
+        {
+          "sample_id": "dev_dia110_utt7",
+          "split": "dev",
+          "dialogue_id": 110,
+          "utterance_id": 7,
+          "emotion": "neutral",
+          "has_text": true,
+          "has_video": false,
+          "has_audio": false,
+          "video_status": "missing_file",
+          "audio_status": "missing_audio",
+          "exclusion_reason": "missing_video_recording"
+        }
+      ]
+    },
+    "test": {
+      "split": "test",
+      "annotation_count": 2610,
+      "unique_sample_count": 2610,
+      "duplicate_count": 0,
+      "duplicates": [],
+      "invalid_emotion_count": 0,
+      "invalid_emotions": [],
+      "missing_media_count": 0,
+      "corrupted_media_count": 0,
+      "missing_audio_count": 0,
+      "fully_usable_count": 2610,
+      "excluded_count": 0,
+      "emotion_distribution": {
+        "surprise": 281,
+        "anger": 345,
+        "neutral": 1256,
+        "joy": 402,
+        "sadness": 208,
+        "fear": 50,
+        "disgust": 68
+      },
+      "sentiment_distribution": {
+        "positive": 521,
+        "negative": 833,
+        "neutral": 1256
+      },
+      "exclusions": []
+    }
+  }
+}
