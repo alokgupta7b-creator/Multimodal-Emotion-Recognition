@@ -283,3 +283,6 @@ models/
 **/models/
 checkpoints/
 **/checkpoints/
+
+# Locally trained text emotion model
+text_emotion_model.joblib
