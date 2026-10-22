@@ -43,6 +43,20 @@ from speech_emotion.model import (
     predict_from_audio,
 )
 
+from speech_emotion.training import (
+    DataConfig,
+    DatasetSplit,
+    EvaluationResult,
+    MELDDataLoader,
+    MOSEIDataConfig,
+    MOSEIDataLoader,
+    SERModelTrainer,
+    TrainingConfig,
+    compute_metrics,
+    evaluate_model_on_split,
+    harmonize_mosei_emotion,
+)
+
 __version__ = "0.1.0"
 
 __all__ = [
@@ -51,18 +65,29 @@ __all__ = [
     "AudioMetadata",
     "AuditReport",
     "DEFAULT_SAMPLE_RATE",
+    "DataConfig",
+    "DatasetSplit",
+    "EvaluationResult",
+    "MELDDataLoader",
     "MELDLabelEncoder",
     "MELD_CLASS_NAMES",
     "MELD_EMOTIONS",
     "MELD_SPLITS",
     "MFCCExtractor",
+    "MOSEIDataConfig",
+    "MOSEIDataLoader",
     "NUM_MELD_CLASSES",
     "SERClassifier",
     "SERConfig",
+    "SERModelTrainer",
     "SERPrediction",
     "TOTAL_MFCC_FEATURES",
+    "TrainingConfig",
+    "compute_metrics",
     "create_mel_filterbank",
+    "evaluate_model_on_split",
     "extract_mfcc_features",
+    "harmonize_mosei_emotion",
     "load_audio",
     "load_manifest_records",
     "predict_emotion",

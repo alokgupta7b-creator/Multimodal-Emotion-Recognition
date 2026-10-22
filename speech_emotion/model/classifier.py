@@ -22,8 +22,10 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import joblib
 import numpy as np
 from sklearn.linear_model import LogisticRegression
+from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVC
 
 from speech_emotion.config import TOTAL_MFCC_FEATURES
 from speech_emotion.model.label_mapping import MELDLabelEncoder, MELD_CLASS_NAMES
@@ -41,7 +43,7 @@ class SERConfig:
     Parameters
     ----------
     classifier_type:
-        Model type ('logistic_regression'). Default: 'logistic_regression'.
+        Model type ('logistic_regression', 'svm', 'mlp'). Default: 'logistic_regression'.
     standardize:
         Whether to standardize features with StandardScaler. Default: True.
     class_weight:
@@ -52,6 +54,16 @@ class SERConfig:
         Inverse of regularization strength. Default: 1.0.
     solver:
         Optimization algorithm ('lbfgs'). Default: 'lbfgs'.
+    svm_kernel:
+        Kernel for SVM ('rbf', 'linear', etc.). Default: 'rbf'.
+    svm_gamma:
+        Kernel coefficient for SVM ('scale', 'auto'). Default: 'scale'.
+    mlp_hidden_layers:
+        Layer sizes for MLPClassifier. Default: (64, 32).
+    mlp_alpha:
+        L2 regularization penalty for MLP. Default: 0.001.
+    mlp_early_stopping:
+        Whether to use early stopping for MLP. Default: True.
     random_state:
         Seed for reproducibility. Default: 42.
     expected_features:
@@ -64,12 +76,18 @@ class SERConfig:
     max_iter: int = 2000
     C: float = 1.0
     solver: str = "lbfgs"
+    svm_kernel: str = "rbf"
+    svm_gamma: str = "scale"
+    mlp_hidden_layers: Tuple[int, ...] = (64, 32)
+    mlp_alpha: float = 0.001
+    mlp_early_stopping: bool = True
     random_state: Optional[int] = 42
     expected_features: int = TOTAL_MFCC_FEATURES
 
     def __post_init__(self) -> None:
-        if self.classifier_type != "logistic_regression":
-            raise ValueError(f"Unsupported classifier_type: {self.classifier_type!r}")
+        allowed = ("logistic_regression", "svm", "mlp")
+        if self.classifier_type not in allowed:
+            raise ValueError(f"Unsupported classifier_type: {self.classifier_type!r}. Must be one of {allowed}")
         if self.max_iter <= 0:
             raise ValueError(f"max_iter must be positive, got {self.max_iter}")
         if self.C <= 0.0:
@@ -119,6 +137,25 @@ class SERClassifier:
                 C=self.config.C,
                 class_weight=self.config.class_weight,
                 solver=self.config.solver,
+                random_state=self.config.random_state,
+            )
+            steps.append(("classifier", clf))
+        elif self.config.classifier_type == "svm":
+            clf = SVC(
+                C=self.config.C,
+                kernel=self.config.svm_kernel,
+                gamma=self.config.svm_gamma,
+                class_weight=self.config.class_weight,
+                probability=True,
+                random_state=self.config.random_state,
+            )
+            steps.append(("classifier", clf))
+        elif self.config.classifier_type == "mlp":
+            clf = MLPClassifier(
+                hidden_layer_sizes=self.config.mlp_hidden_layers,
+                alpha=self.config.mlp_alpha,
+                max_iter=self.config.max_iter,
+                early_stopping=self.config.mlp_early_stopping,
                 random_state=self.config.random_state,
             )
             steps.append(("classifier", clf))

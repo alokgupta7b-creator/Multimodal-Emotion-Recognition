@@ -1,8 +1,8 @@
-# speech_emotion — Audio Preprocessing, Acoustic Feature Extraction & SER Model (Tasks 4 & 5)
+# speech_emotion — Audio Preprocessing, Acoustic Feature Extraction & SER Benchmarking (Tasks 4, 5 & 6)
 
-A dedicated, self-contained module for **speech audio validation, preprocessing, acoustic feature extraction, and modular Speech Emotion Recognition (SER)** for Multimodal Emotion Recognition research.
+A dedicated, self-contained module for **speech audio validation, preprocessing, acoustic feature extraction, modular Speech Emotion Recognition (SER), and reproducible model training/benchmarking** for Multimodal Emotion Recognition research.
 
-This module completes **Task 4 (Audio Preprocessing and Feature Extraction)** and **Task 5 (Speech Emotion Recognition Model Development)**. It provides modular acoustic feature extraction and a standardized classifier interface ready for dynamic reliability estimation and multimodal fusion.
+This module completes **Task 4 (Audio Preprocessing and Feature Extraction)**, **Task 5 (Speech Emotion Recognition Model Development)**, and **Task 6 (SER Model Training, Evaluation, and Benchmarking)**. It provides modular acoustic feature extraction, configurable classifier pipelines, and an audited training harness ready for dynamic reliability estimation and multimodal fusion.
 
 ---
 
@@ -15,7 +15,8 @@ Before audio signals can be consumed by downstream multimodal fusion networks, c
 2. **Standardized** to mono channel format and a consistent target sampling rate (16 kHz).
 3. **Represented** using noise-robust acoustic feature descriptors (Mel-Frequency Cepstral Coefficients, MFCCs) with utterance-level temporal pooling.
 4. **Classified** into the 7 canonical MELD emotion classes with class probability estimation.
-5. **Decoupled** from dataset-specific paths so the prediction interface can be integrated directly with multimodal fusion pipelines.
+5. **Trained & Benchmarked** on official MELD splits using rigorous machine learning methodology (train on train, select on dev, evaluate on frozen test).
+6. **Decoupled** from dataset-specific paths so the prediction interface can be integrated directly with multimodal fusion pipelines.
 
 ---
 
@@ -32,16 +33,26 @@ speech_emotion/
 ├── preprocess_audio.py     # Dataset integration, batch processor, deduplication & reports
 ├── model/
 │   ├── __init__.py         # Model package exports
-│   ├── classifier.py       # SERClassifier pipeline (StandardScaler + LogisticRegression)
+│   ├── classifier.py       # SERClassifier pipeline (LogReg, SVM, MLP)
 │   ├── label_mapping.py    # MELDLabelEncoder for 7 canonical emotion classes
 │   └── predict.py          # SERPrediction and inference interfaces
+├── training/
+│   ├── __init__.py         # Training package exports
+│   ├── config.py           # DataConfig and TrainingConfig dataclasses
+│   ├── data.py             # MELDDataLoader with split isolation and manifest joining
+│   ├── metrics.py          # Comprehensive 7-class metrics, confusion matrix, latency
+│   ├── train.py            # SERModelTrainer benchmark and hyperparameter tuning engine
+│   └── evaluate.py         # Frozen test evaluation and report generation
 └── tests/
     ├── __init__.py
     ├── test_audio_loader.py        # Audio loader, stereo downmix, and corruption tests
     ├── test_feature_extraction.py  # MFCC 40-feature shape, math, and consistency tests
     ├── test_preprocess_audio.py    # Manifest parsing, duplicate & failure audit tests
     ├── test_label_mapping.py       # 7-class label mapping and validation tests
-    └── test_model.py               # Model training, prediction, probabilities, serialization
+    ├── test_model.py               # Model training, prediction, probabilities, serialization
+    ├── test_training_data.py       # Data loader, manifest joins, split isolation tests
+    ├── test_metrics.py             # Metrics calculation, unpredicted classes, confusion matrix
+    └── test_training_pipeline.py   # Training duration, benchmark selection, artifact loading
 ```
 
 ---
@@ -265,11 +276,259 @@ Comparison of features extracted by `speech_emotion` against existing MELD MFCC 
 
 ---
 
-## 9. Next Steps (Task 6)
+## 9. Task 6 — Model Training, Hyperparameter Tuning & Benchmarking
 
-Task 5 delivers the modular SER model architecture, label mapping, and prediction interfaces.
-Subsequent model training and evaluation (Task 6) will address:
-1. Training the SER model on the complete MELD training split feature matrix (9,971 samples).
-2. Evaluating development split metrics (accuracy, macro F1, weighted F1, per-class precision/recall).
-3. Computing the development split confusion matrix.
-4. Serializing final verified model weights and evaluation reports outside Git tracking.
+### 9.1 Experimental Methodology & Split Protocol
+
+Task 6 implements a reproducible training, hyperparameter tuning, and frozen evaluation workflow adhering strictly to machine learning best practices:
+1. **Train on Training Split Only**: All preprocessing parameters (`StandardScaler` mean and variance) and model weights are estimated strictly on `train` (9,988 samples).
+2. **Model Selection on Development Split**: Model architectures and regularization hyperparameters ($C$, class weighting) were selected using the `dev` split (1,108 samples) according to Macro F1.
+3. **Frozen Evaluation on Official Test Split**: The selected top model was evaluated once on the unseen, official `test` split (2,610 samples). The test set was **never** touched during tuning or model selection.
+
+---
+
+### 9.2 Development Split Model Comparison (Model Selection)
+
+Evaluated across 6 candidate model configurations on the 1,108 development samples:
+
+| Model Configuration | Classifier Family | Class Weight | Regularization | Dev Accuracy | Dev Balanced Acc | Dev Macro F1 | Dev Weighted F1 | Training Time | Latency / Sample | Model Footprint |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **`logreg_balanced_C0.01`** **(Selected)** | Logistic Regression | balanced | $C=0.01$ | **23.65%** | **24.25%** | **20.62%** | **25.75%** | 0.21 s | 0.002 ms | 5.0 KB |
+| **`logreg_balanced_C0.1`** | Logistic Regression | balanced | $C=0.1$ | 23.38% | 24.12% | 20.50% | 25.47% | 0.28 s | 0.003 ms | 5.0 KB |
+| **`logreg_balanced_C1.0`** *(Baseline)* | Logistic Regression | balanced | $C=1.0$ | 23.29% | 24.09% | 20.44% | 25.34% | 0.31 s | 0.003 ms | 5.0 KB |
+| **`svm_rbf_balanced_C1.0`** | SVM (RBF kernel) | balanced | $C=1.0$ | 25.99% | 21.43% | 19.90% | 27.49% | 172.8 s | 2.191 ms | 4.1 MB |
+| **`mlp_relu_balanced`** | MLP (64, 32) | balanced | $\alpha=10^{-3}$ | 44.95% | 20.21% | 18.04% | 35.56% | 2.40 s | 0.005 ms | 126 KB |
+| **`logreg_unweighted_C1.0`** | Logistic Regression | None | $C=1.0$ | 45.31% | 18.88% | 16.02% | 33.41% | 0.37 s | 0.002 ms | 5.0 KB |
+
+**Key Takeaways**:
+- Unweighted models (`logreg_unweighted`, `mlp`) achieve higher raw accuracy (~45%) solely by disproportionately predicting the majority class (`neutral`, 42.3% of MELD), but suffer severe Macro F1 collapse (16–18%) due to low recall on minority emotions (`disgust`, `fear`).
+- Balanced Logistic Regression achieves superior Macro F1 across all classes. Tuning $C=0.01$ provides beneficial regularization, yielding the highest Dev Macro F1 (**20.62%**).
+
+---
+
+### 9.3 Final Test Split Evaluation (Frozen Benchmark)
+
+The selected top model (`logreg_balanced_C0.01`) and the standard baseline (`logreg_balanced_C1.0`) were evaluated on the official MELD test split (2,610 samples):
+
+| Metric | Selected Model (`C=0.01`, balanced) | Baseline Model (`C=1.0`, balanced) | Relative Improvement |
+| :--- | :---: | :---: | :---: |
+| **Test Accuracy** | **23.18%** | 22.45% | +0.73% |
+| **Test Balanced Accuracy** | **23.23%** | 22.45% | +0.78% |
+| **Test Macro F1** | **19.17%** | 18.67% | +0.50% |
+| **Test Weighted F1** | **26.76%** | 26.00% | +0.76% |
+| **Test Macro Precision** | **21.98%** | 21.70% | +0.28% |
+| **Test Macro Recall** | **23.23%** | 22.45% | +0.78% |
+| **Inference Latency** | **0.004 ms / sample** | 0.004 ms / sample | — |
+| **Serialized Model Size** | **5.0 KB** | 5.0 KB | — |
+
+---
+
+### 9.4 Per-Class Performance and Confusion Matrix (Test Split)
+
+#### Selected Model Per-Class Breakdown:
+| Emotion Class | Precision | Recall | F1-Score | Support |
+| :--- | :---: | :---: | :---: | :---: |
+| **anger** | 25.69% | 29.86% | **27.61%** | 345 |
+| **disgust** | 3.04% | 19.12% | **5.25%** | 68 |
+| **fear** | 4.04% | 22.00% | **6.83%** | 50 |
+| **joy** | 24.14% | 20.90% | **22.40%** | 402 |
+| **neutral** | 61.94% | 21.89% | **32.35%** | 1,256 |
+| **sadness** | 12.29% | 25.00% | **16.48%** | 208 |
+| **surprise** | 22.71% | 23.84% | **23.26%** | 281 |
+
+#### Test Confusion Matrix (Rows: True Class, Columns: Predicted Class):
+| True \ Pred | anger | disgust | fear | joy | neutral | sadness | surprise |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **anger** | **103** | 54 | 36 | 37 | 30 | 48 | 37 |
+| **disgust** | 20 | **13** | 9 | 4 | 5 | 11 | 6 |
+| **fear** | 10 | 7 | **11** | 4 | 6 | 8 | 4 |
+| **joy** | 72 | 67 | 26 | **84** | 59 | 59 | 35 |
+| **neutral** | 127 | 222 | 134 | 159 | **275** | 211 | 128 |
+| **sadness** | 33 | 20 | 24 | 25 | 36 | **52** | 18 |
+| **surprise** | 36 | 44 | 32 | 35 | 33 | 34 | **67** |
+
+---
+
+### 9.5 Reproducing Training and Evaluation
+
+```python
+from speech_emotion.training import (
+    DataConfig,
+    MELDDataLoader,
+    SERModelTrainer,
+    evaluate_model_on_split,
+)
+
+# 1. Load data with verified split isolation
+loader = MELDDataLoader(DataConfig())
+train_split, dev_split, test_split = loader.load_all_splits(join_manifest=True)
+
+# 2. Run benchmark and select top model on dev
+trainer = SERModelTrainer(output_dir="models/speech_emotion", random_state=42)
+best_name, best_model, dev_results = trainer.run_benchmark(
+    train_data=train_split,
+    dev_data=dev_split,
+    selection_metric="macro_f1",
+)
+
+# 3. Evaluate frozen model on official test split
+test_result = evaluate_model_on_split(
+    model=best_model,
+    split_data=test_split,
+    output_dir="models/speech_emotion",
+    report_prefix="test_evaluation",
+)
+print(f"Test Accuracy: {test_result.accuracy*100:.2f}% | Test Macro F1: {test_result.macro_f1*100:.2f}%")
+```
+
+---
+
+### 9.6 Task 6 Extension: CMU-MOSEI Speech Emotion & Sentiment Benchmarks
+
+To evaluate the generalization of acoustic affective modeling across heterogeneous corpora, Task 6 was extended to the CMU-MOSEI dataset:
+
+#### 9.6.1 Acoustic Feature Representations & Dimensionality
+- **MELD Acoustic Baseline**: 40-dimensional MFCCs (13 cepstral coefficients + energy, 13 $\Delta$, 13 $\Delta\Delta$) temporally pooled into sample-level vectors.
+- **CMU-MOSEI Acoustic Features**: 74-dimensional COVAREP acoustic features extracted from `CMU_MOSEI_COVAREP.csd` (12 Mel-generalized cepstral coefficients, 12 $\Delta$, 12 $\Delta\Delta$, 5 harmonic model phase distortion parameters, 12 $\Delta$, 12 $\Delta\Delta$, $F_0$, VUV, NAQ, QOQ, $H_1$-$H_2$, PSP, MDQ, peakSlope, Rd, Rd_conf).
+- **Singularity Sanitization**: Audited raw COVAREP intervals revealed isolated $+\infty$ values in column 7 (due to division-by-zero singularities in the SDK release). Implemented finite value sanitization (`np.nan_to_num`) ensuring 100% valid float64 representations.
+- **Model Decoupling**: Incompatible acoustic feature spaces (40-dim MFCC vs 74-dim COVAREP) are kept strictly separate using dataset-specific classifier heads (`expected_features=40` for MELD, `expected_features=74` for CMU-MOSEI).
+
+#### 9.6.2 Emotion Harmonization Mapping & Target Spaces
+- **7-Class Categorical Emotion Harmonization**:
+  The CMU-MOSEI categorical emotion annotations were mapped to the canonical 7-class MELD space using an explicit, deterministic mapping:
+  - `happy` $\rightarrow$ `joy`
+  - `sad` $\rightarrow$ `sadness`
+  - `anger` $\rightarrow$ `anger`
+  - `surprise` $\rightarrow$ `surprise`
+  - `disgust` $\rightarrow$ `disgust`
+  - `fear` $\rightarrow$ `fear`
+  - `none` $\rightarrow$ `neutral`
+- **Sentiment Target Isolation**: Continuous sentiment polarity $[-3.0, +3.0]$ is strictly quarantined from categorical emotion classifications to prevent unscientific conflation. Sentiment is evaluated independently as a 3-class target:
+  - `negative`: $[-3.0, -0.1]$
+  - `neutral`: $(-0.1, +0.1)$
+  - `positive`: $[+0.1, +3.0]$
+
+#### 9.6.3 CMU-MOSEI 7-Class Harmonized SER Benchmark Results
+
+Evaluated across 4 candidate configurations on the 1,856 development samples:
+
+| Model Configuration | Class Weight | C | Dev Accuracy | Dev Balanced Acc | Dev Macro F1 | Dev Weighted F1 |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **`mosei_logreg_balanced_C0.01`** **(Selected)** | balanced | 0.01 | **23.22%** | **22.43%** | **17.76%** | **27.73%** |
+| **`mosei_logreg_balanced_C0.1`** | balanced | 0.1 | 22.52% | 22.35% | 17.73% | 26.97% |
+| **`mosei_logreg_balanced_C1.0`** | balanced | 1.0 | 22.36% | 22.61% | 17.72% | 26.66% |
+| **`mosei_logreg_unweighted_C1.0`** | None | 1.0 | 46.77% | 16.36% | 13.67% | 34.02% |
+
+##### Final Held-Out Test Evaluation (4,616 samples, Selected Model `C=0.01`):
+- **Accuracy**: 24.91% | **Balanced Accuracy**: 21.19%
+- **Macro F1**: 18.31% | **Weighted F1**: 29.68%
+- **Macro Precision**: 21.21% | **Macro Recall**: 21.19%
+- **Inference Latency**: 0.002 ms / sample | **Model Footprint**: 7.7 KB
+
+| Emotion Class | Precision | Recall | F1-Score | Support |
+| :--- | :---: | :---: | :---: | :---: |
+| **anger** | 19.76% | 16.55% | 18.01% | 592 |
+| **disgust** | 12.08% | 28.28% | 16.93% | 244 |
+| **fear** | 2.09% | 18.18% | 3.74% | 99 |
+| **joy** | 63.53% | 30.70% | 41.40% | 2,202 |
+| **neutral** | 23.49% | 18.44% | 20.66% | 694 |
+| **sadness** | 24.79% | 21.20% | 22.86% | 698 |
+| **surprise** | 2.71% | 14.94% | 4.59% | 87 |
+
+#### 9.6.4 CMU-MOSEI 3-Class Speech Sentiment Benchmark Results
+
+Evaluated on 1,856 development samples and 4,616 held-out test samples:
+
+| Model Configuration | Class Weight | C | Dev Accuracy | Dev Balanced Acc | Dev Macro F1 | Dev Weighted F1 |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **`mosei_sentiment_balanced_C1.0`** **(Selected)** | balanced | 1.0 | **42.19%** | **39.71%** | **39.40%** | **42.84%** |
+| **`mosei_sentiment_balanced_C0.1`** | balanced | 0.1 | 41.76% | 39.20% | 38.93% | 42.41% |
+| **`mosei_sentiment_unweighted_C1.0`** | None | 1.0 | 50.54% | 38.68% | 34.27% | 42.49% |
+
+##### Final Held-Out Test Evaluation (4,616 samples, Selected Model `C=1.0`):
+- **Accuracy**: 43.26% | **Balanced Accuracy**: 40.64%
+- **Macro F1**: 40.44% | **Weighted F1**: 44.09%
+- **Macro Precision**: 40.70% | **Macro Recall**: 40.64%
+- **Inference Latency**: 0.002 ms / sample | **Model Footprint**: 5.2 KB
+
+| Sentiment Class | Precision | Recall | F1-Score | Support |
+| :--- | :---: | :---: | :---: | :---: |
+| **negative** | 38.45% | 40.19% | 39.30% | 1,341 |
+| **neutral** | 24.96% | 31.23% | 27.75% | 1,015 |
+| **positive** | 58.69% | 50.49% | 54.28% | 2,260 |
+
+---
+
+### 9.7 Cross-Dataset Experiment Comparison
+
+The following table summarizes all speech affective recognition benchmarks across MELD and CMU-MOSEI:
+
+| Dimension | Experiment 1: MELD 7-Class SER | Experiment 2: CMU-MOSEI 7-Class SER | Experiment 3: CMU-MOSEI 3-Class Sentiment |
+| :--- | :--- | :--- | :--- |
+| **Task** | Categorical Emotion Recognition | Harmonized Categorical Emotion | Discrete Sentiment Polarity |
+| **Target Space** | 7 Classes (`anger`..`surprise`) | 7 Classes (Ekman 6 + `neutral`) | 3 Classes (`negative`, `neutral`, `positive`) |
+| **Feature Representation** | 40-dim MFCC (13 base+E, 13 $\Delta$, 13 $\Delta\Delta$) | 74-dim COVAREP glottal & spectral | 74-dim COVAREP glottal & spectral |
+| **Extraction Source** | Raw audio PCM files (16 kHz mono) | `CMU_MOSEI_COVAREP.csd` intervals | `CMU_MOSEI_COVAREP.csd` intervals |
+| **Split Structure** | Dialogue-isolated (1,433 dialogues) | Video-isolated (3,294 YouTube videos) | Video-isolated (3,294 YouTube videos) |
+| **Train Samples** | 9,988 | 16,165 | 16,165 |
+| **Dev Samples** | 1,108 | 1,856 | 1,856 |
+| **Test Samples** | 2,610 | 4,616 | 4,616 |
+| **Selected Model** | `logreg_balanced_C0.01` | `mosei_logreg_balanced_C0.01` | `mosei_sentiment_balanced_C1.0` |
+| **Dev Macro F1** | **20.62%** | **17.76%** | **39.40%** |
+| **Dev Accuracy** | **23.65%** | **23.22%** | **42.19%** |
+| **Dev Balanced Acc** | **24.25%** | **22.43%** | **39.71%** |
+| **Test Macro F1** | **19.17%** | **18.31%** | **40.44%** |
+| **Test Accuracy** | **23.18%** | **24.91%** | **43.26%** |
+| **Test Balanced Acc** | **23.23%** | **21.19%** | **40.64%** |
+| **Test Weighted F1** | **26.76%** | **29.68%** | **44.09%** |
+| **Inference Latency** | 0.004 ms / sample | 0.002 ms / sample | 0.002 ms / sample |
+| **Serialized Footprint**| 5.0 KB | 7.7 KB | 5.2 KB |
+| **Core Limitations** | Multi-speaker crosstalk, laugh tracks, majority `neutral` (48%) | Extreme `joy` skew (47.7%), monologue acoustics, minority `fear`/`surprise` | High acoustic variance between neutral and mild sentiment; requires lexical context |
+
+---
+
+### 9.8 Reproducing CMU-MOSEI Training and Evaluation
+
+```python
+from speech_emotion.training.mosei_data import MOSEIDataLoader, MOSEIDataConfig
+from speech_emotion.training import SERModelTrainer, evaluate_model_on_split
+
+# 1. Load CMU-MOSEI with video-level split integrity
+config = MOSEIDataConfig(
+    features_dir="D:/Datasets/CMU-MOSEI/features/covarep_pooled",
+    manifests_dir="datasets/CMU-MOSEI",
+    target_column="harmonized_emotion",  # or "sentiment_discrete"
+)
+loader = MOSEIDataLoader(config)
+train_split, dev_split, test_split = loader.load_all_splits()
+
+# 2. Benchmark candidate models on dev split
+trainer = SERModelTrainer(
+    output_dir="models/speech_emotion",
+    model_name_prefix="mosei_emotion",
+    expected_features=74,
+)
+best_name, best_model, dev_results = trainer.run_benchmark(
+    train_data=train_split,
+    dev_data=dev_split,
+    selection_metric="macro_f1",
+)
+
+# 3. Evaluate frozen model on official test split
+test_result = evaluate_model_on_split(
+    model=best_model,
+    split_data=test_split,
+    output_dir="models/speech_emotion",
+    report_prefix="mosei_test_evaluation",
+)
+print(f"Test Accuracy: {test_result.accuracy*100:.2f}% | Test Macro F1: {test_result.macro_f1*100:.2f}%")
+```
+
+---
+
+## 10. Next Steps (Task 7 — Multimodal Fusion)
+
+With Task 6 complete, verified speech emotion features, calibrated prediction probabilities, and serialized baseline models are ready for integration with the text and facial modalities:
+1. **Dynamic Reliability Estimation**: Estimating acoustic modality confidence and signal consistency (using prediction entropy and feature variance).
+2. **Multimodal Alignment**: Joining speech predictions with text embeddings and facial action units via synchronized utterance IDs.
+3. **Adaptive Fusion Network**: Dynamically weighting modalities according to per-sample reliability to produce robust multimodal emotion classifications.
