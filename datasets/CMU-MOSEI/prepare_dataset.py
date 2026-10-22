@@ -300,14 +300,18 @@ def resolve_sample_media(
     visual_dir: Optional[Path],
     text_dir: Optional[Path],
     verify_media: bool = True,
+    csd_handles: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict[str, Any], Optional[str]]:
     """
     Resolves and verifies availability of text, audio, and visual modality files.
+    Supports either precomputed CSD archives (.csd) or filesystem directories (.wav/.mp4/.npy).
     Returns updated record with modality flags and exclusion reason if any.
     """
     sample_id = record["sample_id"]
     video_id = record["video_id"]
     clip_id = record["clip_id"]
+    start_time = float(record["start_time"])
+    end_time = float(record["end_time"])
 
     text_path_rel = ""
     audio_path_rel = ""
@@ -321,76 +325,126 @@ def resolve_sample_media(
     audio_status = "unverified"
     text_status = "ok" if has_text else "not_provided"
 
-    # 1. Text modality verification
-    if text_dir and text_dir.is_dir():
-        cand_txt = [
-            text_dir / f"{sample_id}.txt",
-            text_dir / video_id / f"{clip_id}.txt",
-            text_dir / f"{sample_id}.npy",
-        ]
-        for p in cand_txt:
-            if p.exists():
-                text_path_rel = p.relative_to(text_dir.parent).as_posix()
+    if csd_handles and verify_media:
+        # 1. Text modality via CSD or transcript
+        if "words" in csd_handles and video_id in csd_handles["words"]:
+            w_intervals = csd_handles["words"][video_id]["intervals"][:]
+            overlap = (w_intervals[:, 0] < end_time) & (w_intervals[:, 1] > start_time)
+            if overlap.any() or has_text:
                 has_text = True
-                text_status = "ok"
-                break
+                text_status = "ok_csd_words"
+                text_path_rel = f"features/CMU_MOSEI_TimestampedWords.csd#{sample_id}"
+            else:
+                text_status = "empty_csd_words"
+        elif has_text:
+            text_status = "ok_transcript"
+            text_path_rel = f"features/CMU_MOSEI_TimestampedWords.csd#{sample_id}"
+        else:
+            text_status = "missing_csd_words"
 
-    # 2. Audio modality verification
-    if audio_dir and audio_dir.is_dir():
-        cand_aud = [
-            audio_dir / f"{sample_id}.wav",
-            audio_dir / f"{sample_id}.mp3",
-            audio_dir / video_id / f"{clip_id}.wav",
-            audio_dir / f"{sample_id}.npy",
-        ]
-        for p in cand_aud:
-            if p.exists():
-                audio_path_rel = p.relative_to(audio_dir.parent).as_posix()
-                if verify_media and p.suffix.lower() == ".wav":
-                    valid, reason = check_wav_integrity(p)
-                    audio_status = reason
-                    has_audio = valid
-                elif verify_media:
-                    valid, reason = check_feature_file_integrity(p)
-                    audio_status = reason
-                    has_audio = valid
-                else:
-                    audio_status = "present_unverified"
+        # 2. Audio modality via COVAREP CSD
+        if "audio" in csd_handles:
+            if video_id in csd_handles["audio"]:
+                a_intervals = csd_handles["audio"][video_id]["intervals"][:]
+                overlap = (a_intervals[:, 0] < end_time) & (a_intervals[:, 1] > start_time)
+                if overlap.any():
                     has_audio = True
-                break
-        if not has_audio and audio_status == "unverified":
-            audio_status = "missing_file"
-    else:
-        audio_status = "no_audio_dir_specified"
-
-    # 3. Visual modality verification
-    target_vis_dir = visual_dir or raw_dir
-    if target_vis_dir and target_vis_dir.is_dir():
-        cand_vis = [
-            target_vis_dir / f"{sample_id}.mp4",
-            target_vis_dir / f"{sample_id}.avi",
-            target_vis_dir / video_id / f"{clip_id}.mp4",
-            target_vis_dir / f"{sample_id}.npy",
-        ]
-        for p in cand_vis:
-            if p.exists():
-                visual_path_rel = p.relative_to(target_vis_dir.parent).as_posix()
-                if verify_media and p.suffix.lower() in (".mp4", ".mov"):
-                    valid, reason = check_mp4_integrity(p)
-                    video_status = reason
-                    has_visual = valid
-                elif verify_media:
-                    valid, reason = check_feature_file_integrity(p)
-                    video_status = reason
-                    has_visual = valid
+                    audio_status = "ok_csd_covarep"
+                    audio_path_rel = f"features/CMU_MOSEI_COVAREP.csd#{sample_id}"
                 else:
-                    video_status = "present_unverified"
+                    audio_status = "zero_audio_frames_in_interval"
+            else:
+                audio_status = "video_not_in_covarep_csd"
+        else:
+            audio_status = "no_audio_csd_provided"
+
+        # 3. Visual modality via FACET 4.2 CSD
+        if "visual" in csd_handles:
+            if video_id in csd_handles["visual"]:
+                v_intervals = csd_handles["visual"][video_id]["intervals"][:]
+                overlap = (v_intervals[:, 0] < end_time) & (v_intervals[:, 1] > start_time)
+                if overlap.any():
                     has_visual = True
-                break
-        if not has_visual and video_status == "unverified":
-            video_status = "missing_file"
+                    video_status = "ok_csd_facet42"
+                    visual_path_rel = f"features/CMU_MOSEI_VisualFacet42.csd#{sample_id}"
+                else:
+                    video_status = "zero_visual_frames_in_interval"
+            else:
+                video_status = "video_not_in_facet_csd"
+        else:
+            video_status = "no_visual_csd_provided"
+
     else:
-        video_status = "no_visual_dir_specified"
+        # 1. Text modality verification
+        if text_dir and text_dir.is_dir():
+            cand_txt = [
+                text_dir / f"{sample_id}.txt",
+                text_dir / video_id / f"{clip_id}.txt",
+                text_dir / f"{sample_id}.npy",
+            ]
+            for p in cand_txt:
+                if p.exists():
+                    text_path_rel = p.relative_to(text_dir.parent).as_posix()
+                    has_text = True
+                    text_status = "ok"
+                    break
+
+        # 2. Audio modality verification
+        if audio_dir and audio_dir.is_dir():
+            cand_aud = [
+                audio_dir / f"{sample_id}.wav",
+                audio_dir / f"{sample_id}.mp3",
+                audio_dir / video_id / f"{clip_id}.wav",
+                audio_dir / f"{sample_id}.npy",
+            ]
+            for p in cand_aud:
+                if p.exists():
+                    audio_path_rel = p.relative_to(audio_dir.parent).as_posix()
+                    if verify_media and p.suffix.lower() == ".wav":
+                        valid, reason = check_wav_integrity(p)
+                        audio_status = reason
+                        has_audio = valid
+                    elif verify_media:
+                        valid, reason = check_feature_file_integrity(p)
+                        audio_status = reason
+                        has_audio = valid
+                    else:
+                        audio_status = "present_unverified"
+                        has_audio = True
+                    break
+            if not has_audio and audio_status == "unverified":
+                audio_status = "missing_file"
+        else:
+            audio_status = "no_audio_dir_specified"
+
+        # 3. Visual modality verification
+        target_vis_dir = visual_dir or raw_dir
+        if target_vis_dir and target_vis_dir.is_dir():
+            cand_vis = [
+                target_vis_dir / f"{sample_id}.mp4",
+                target_vis_dir / f"{sample_id}.avi",
+                target_vis_dir / video_id / f"{clip_id}.mp4",
+                target_vis_dir / f"{sample_id}.npy",
+            ]
+            for p in cand_vis:
+                if p.exists():
+                    visual_path_rel = p.relative_to(target_vis_dir.parent).as_posix()
+                    if verify_media and p.suffix.lower() in (".mp4", ".mov"):
+                        valid, reason = check_mp4_integrity(p)
+                        video_status = reason
+                        has_visual = valid
+                    elif verify_media:
+                        valid, reason = check_feature_file_integrity(p)
+                        video_status = reason
+                        has_visual = valid
+                    else:
+                        video_status = "present_unverified"
+                        has_visual = True
+                    break
+            if not has_visual and video_status == "unverified":
+                video_status = "missing_file"
+        else:
+            video_status = "no_visual_dir_specified"
 
     # Compute overall usability
     # When media verification is skipped, usability is determined by schema validity
@@ -398,12 +452,21 @@ def resolve_sample_media(
     is_usable = True
 
     if verify_media:
-        if audio_dir and not has_audio:
-            is_usable = False
-            exclusion_reason = f"audio_{audio_status}"
-        elif target_vis_dir and not has_visual:
-            is_usable = False
-            exclusion_reason = f"video_{video_status}"
+        if csd_handles:
+            if not has_audio:
+                is_usable = False
+                exclusion_reason = f"audio_{audio_status}"
+            elif not has_visual:
+                is_usable = False
+                exclusion_reason = f"video_{video_status}"
+        else:
+            target_vis_dir = visual_dir or raw_dir
+            if audio_dir and not has_audio:
+                is_usable = False
+                exclusion_reason = f"audio_{audio_status}"
+            elif target_vis_dir and not has_visual:
+                is_usable = False
+                exclusion_reason = f"video_{video_status}"
 
     record["text_path"] = text_path_rel
     record["audio_path"] = audio_path_rel
@@ -440,6 +503,7 @@ def write_reports(
     sanitized_anno_path: str,
     sanitized_audio_path: str,
     sanitized_visual_path: str,
+    sanitized_features_path: str = "Not Provided",
 ) -> None:
     """Writes structured JSON, Markdown summary report, and exclusions CSV."""
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -484,6 +548,8 @@ def write_reports(
         f.write("# CMU-MOSEI Dataset Preprocessing & Validation Report\n\n")
         f.write(f"- **Generated At**: `{timestamp}`\n")
         f.write(f"- **Annotation Source**: `{sanitized_anno_path}`\n")
+        if sanitized_features_path and sanitized_features_path != "Not Provided":
+            f.write(f"- **Features Source (CSD)**: `{sanitized_features_path}`\n")
         f.write(f"- **Audio Source**: `{sanitized_audio_path}`\n")
         f.write(f"- **Visual Source**: `{sanitized_visual_path}`\n\n")
 
@@ -542,6 +608,7 @@ def prepare_cmu_mosei(
     audio_dir: Optional[Path] = None,
     visual_dir: Optional[Path] = None,
     text_dir: Optional[Path] = None,
+    features_dir: Optional[Path] = None,
     output_dir: Path = Path("datasets/CMU-MOSEI"),
     verify_media: bool = True,
     sentiment_threshold: float = 0.0,
@@ -551,7 +618,7 @@ def prepare_cmu_mosei(
     """
     Main preparation pipeline function. Executes end-to-end reading,
     validation, split assignment, leakage detection, manifest generation,
-    and report output.
+    and report output. Supports both raw files and precomputed CSD archives.
     """
     if not annotations_file.is_file():
         raise FileNotFoundError(f"Annotation file not found: {annotations_file}")
@@ -562,9 +629,41 @@ def prepare_cmu_mosei(
         with open(splits_file, "r", encoding="utf-8") as f:
             raw_splits = json.load(f)
             for s_name, vid_list in raw_splits.items():
-                s_clean = s_name.lower().replace("valid", "dev").replace("val", "dev")
+                s_lower = str(s_name).lower()
+                if "train" in s_lower:
+                    s_clean = "train"
+                elif "dev" in s_lower or "val" in s_lower:
+                    s_clean = "dev"
+                elif "test" in s_lower:
+                    s_clean = "test"
+                else:
+                    s_clean = s_lower
                 for vid in vid_list:
                     split_map[str(vid).strip()] = s_clean
+
+    # Open CSD feature handles if features_dir is provided
+    csd_handles: Dict[str, Any] = {}
+    csd_files_to_close: List[Any] = []
+    if features_dir and features_dir.is_dir() and verify_media:
+        try:
+            import h5py
+            aud_csd = features_dir / "CMU_MOSEI_COVAREP.csd"
+            if aud_csd.is_file():
+                h5_aud = h5py.File(aud_csd, "r")
+                csd_handles["audio"] = h5_aud[list(h5_aud.keys())[0]]["data"]
+                csd_files_to_close.append(h5_aud)
+            vis_csd = features_dir / "CMU_MOSEI_VisualFacet42.csd"
+            if vis_csd.is_file():
+                h5_vis = h5py.File(vis_csd, "r")
+                csd_handles["visual"] = h5_vis[list(h5_vis.keys())[0]]["data"]
+                csd_files_to_close.append(h5_vis)
+            wrd_csd = features_dir / "CMU_MOSEI_TimestampedWords.csd"
+            if wrd_csd.is_file():
+                h5_wrd = h5py.File(wrd_csd, "r")
+                csd_handles["words"] = h5_wrd[list(h5_wrd.keys())[0]]["data"]
+                csd_files_to_close.append(h5_wrd)
+        except Exception:
+            pass
 
     # Read annotations
     raw_rows: List[Dict[str, Any]] = []
@@ -683,6 +782,7 @@ def prepare_cmu_mosei(
                 visual_dir=visual_dir,
                 text_dir=text_dir,
                 verify_media=verify_media,
+                csd_handles=csd_handles if csd_handles else None,
             )
 
             if exc_reason:
@@ -790,6 +890,7 @@ def prepare_cmu_mosei(
     all_stats = {
         "generated_at": datetime.now().isoformat(),
         "annotation_source": sanitize_path_display(str(annotations_file)),
+        "features_source": sanitize_path_display(str(features_dir) if features_dir else None),
         "audio_source": sanitize_path_display(str(audio_dir) if audio_dir else None),
         "visual_source": sanitize_path_display(str(visual_dir or raw_dir) if (visual_dir or raw_dir) else None),
         "output_dir": sanitize_path_display(str(output_dir)),
@@ -797,6 +898,13 @@ def prepare_cmu_mosei(
         "splits": stats_by_split,
         "unassigned_exclusions": unassigned_exclusions,
     }
+
+    # Close open CSD file handles
+    for f_h in csd_files_to_close:
+        try:
+            f_h.close()
+        except Exception:
+            pass
 
     # 4. Write output manifests and reports
     manifests_dir = output_dir / "manifests"
@@ -812,6 +920,7 @@ def prepare_cmu_mosei(
         sanitized_anno_path=sanitize_path_display(str(annotations_file)),
         sanitized_audio_path=sanitize_path_display(str(audio_dir) if audio_dir else None),
         sanitized_visual_path=sanitize_path_display(str(visual_dir or raw_dir) if (visual_dir or raw_dir) else None),
+        sanitized_features_path=sanitize_path_display(str(features_dir) if features_dir else None),
     )
 
     return all_stats
@@ -832,6 +941,12 @@ def main():
         type=str,
         default=None,
         help="Optional JSON file defining official video ID splits",
+    )
+    parser.add_argument(
+        "--features-dir",
+        type=str,
+        default=None,
+        help="Optional directory containing precomputed official CSD feature archives",
     )
     parser.add_argument(
         "--raw-dir",
@@ -890,6 +1005,7 @@ def main():
 
     anno_path = Path(args.annotations_file).resolve()
     splits_path = Path(args.splits_file).resolve() if args.splits_file else None
+    features_path = Path(args.features_dir).resolve() if args.features_dir else None
     raw_path = Path(args.raw_dir).resolve() if args.raw_dir else None
     audio_path = Path(args.audio_dir).resolve() if args.audio_dir else None
     visual_path = Path(args.visual_dir).resolve() if args.visual_dir else None
@@ -901,6 +1017,7 @@ def main():
     print("=================================================================")
     print(f"Annotation File       : {anno_path}")
     print(f"Splits File           : {splits_path or 'Inferred from annotations'}")
+    print(f"Features (CSD) Dir    : {features_path or 'None'}")
     print(f"Output Directory      : {out_dir}")
     print(f"Verify Media Files    : {not args.skip_media_verify}")
     print(f"Include Transcripts   : {args.include_transcripts}")
@@ -918,6 +1035,7 @@ def main():
         audio_dir=audio_path,
         visual_dir=visual_path,
         text_dir=text_path,
+        features_dir=features_path,
         output_dir=out_dir,
         verify_media=not args.skip_media_verify,
         sentiment_threshold=args.sentiment_threshold,

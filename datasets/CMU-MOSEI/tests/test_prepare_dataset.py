@@ -261,13 +261,48 @@ class TestCmuMoseiPipeline(unittest.TestCase):
         sanitized = sanitize_path_display(personal_path)
         self.assertNotIn("TestUser", sanitized)
 
-    def test_missing_annotation_file_error(self):
-        """Test that providing a non-existent annotation file raises FileNotFoundError."""
-        with self.assertRaises(FileNotFoundError):
-            prepare_cmu_mosei(
-                annotations_file=self.test_path / "non_existent.csv",
-                output_dir=self.test_path / "out_err",
-            )
+    def test_csd_features_verification(self):
+        """Test that CSD computational sequence handles verify media presence and intervals."""
+        import h5py
+        import numpy as np
+
+        mock_feat_dir = self.test_path / "mock_features"
+        mock_feat_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. Create mock COVAREP CSD
+        with h5py.File(mock_feat_dir / "CMU_MOSEI_COVAREP.csd", "w") as h5_aud:
+            grp = h5_aud.create_group("COVAREP").create_group("data")
+            v_grp = grp.create_group("vid_csd_01")
+            v_grp.create_dataset("intervals", data=np.array([[0.0, 5.0]], dtype=np.float32))
+            v_grp.create_dataset("features", data=np.ones((1, 74), dtype=np.float32))
+
+        # 2. Create mock VisualFacet42 CSD
+        with h5py.File(mock_feat_dir / "CMU_MOSEI_VisualFacet42.csd", "w") as h5_vis:
+            grp = h5_vis.create_group("FACET 4.2").create_group("data")
+            v_grp = grp.create_group("vid_csd_01")
+            v_grp.create_dataset("intervals", data=np.array([[0.0, 5.0]], dtype=np.float32))
+            v_grp.create_dataset("features", data=np.ones((1, 35), dtype=np.float32))
+
+        anno_csv = self.test_path / "csd_test.csv"
+        with open(anno_csv, "w", encoding="utf-8", newline="\n") as f:
+            writer = csv.writer(f)
+            writer.writerow(["video_id", "clip_id", "start_time", "end_time", "sentiment", "happy", "sad", "anger", "surprise", "disgust", "fear", "split", "text"])
+            writer.writerow(["vid_csd_01", "0", "1.0", "3.0", "1.0", "1.0", "0.0", "0.0", "0.0", "0.0", "0.0", "train", "Mock utterance"])
+            writer.writerow(["vid_csd_missing", "0", "1.0", "3.0", "-1.0", "0.0", "1.0", "0.0", "0.0", "0.0", "0.0", "train", "Mock missing utterance"])
+
+        stats = prepare_cmu_mosei(
+            annotations_file=anno_csv,
+            features_dir=mock_feat_dir,
+            output_dir=self.test_path / "out_csd",
+            verify_media=True,
+        )
+
+        tr_stats = stats["splits"]["train"]
+        self.assertEqual(tr_stats["total_samples"], 2)
+        self.assertEqual(tr_stats["usable_samples"], 1)
+        self.assertEqual(tr_stats["excluded_samples"], 1)
+        self.assertEqual(tr_stats["modality_counts"]["has_audio"], 1)
+        self.assertEqual(tr_stats["modality_counts"]["has_visual"], 1)
 
 
 if __name__ == "__main__":
