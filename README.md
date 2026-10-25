@@ -180,19 +180,28 @@ All raw media files, large precomputed feature matrices (`.npy`, `.h5`, `.csd`),
 
 ## Text Emotion Recognition Module
 
-This module predicts emotions from text using TF-IDF feature extraction and Logistic Regression.
+This module predicts emotions from text using TF-IDF feature extraction and Logistic Regression, trained on the MELD dataset.
 
 ### Features
 - Text preprocessing and cleaning.
 - TF-IDF feature extraction using unigrams and bigrams.
-- Model training using the `dair-ai/emotion` dataset.
-- Prediction of six emotions: sadness, joy, love, anger, fear, and surprise.
-- Evaluation using accuracy, precision, recall, and F1-score.
+- Logistic Regression with class balancing.
+- Prediction of seven emotions: anger, disgust, fear, joy, neutral, sadness, and surprise.
+- Evaluation using accuracy, precision, recall, F1-score, and a confusion matrix.
+
+### Dataset Setup
+
+Download the MELD dataset and locate these files:
+- `train_sent_emo.csv`
+- `dev_sent_emo.csv`
+- `test_sent_emo.csv`
+
+Place the `meld_dataset` folder in the parent directory of the repository, matching the path configured in `text_emotion/train.py`. The dataset is not included in Git version control.
 
 ### Installation
 
 ```bash
-python -m pip install datasets scikit-learn joblib
+python -m pip install pandas scikit-learn joblib
 ```
 
 ### Train the Model
@@ -209,8 +218,16 @@ python -m text_emotion.predict
 
 Enter a sentence when prompted. Type `exit` to stop.
 
-### Initial Results
+### Evaluate the Model
 
-The initial test run achieved **83.35% accuracy** on 2,000 test samples. Performance varies across emotion classes, and further improvements may be needed.
+```bash
+python -m text_emotion.evaluate
+```
 
-**Note:** The trained model is generated locally and is not included in Git version control.
+### Results
+
+The model achieved **41.38% test accuracy** on 2,610 samples from the official MELD test split. The weighted F1-score was **0.43**. Performance varies across emotion classes, with less frequent emotions being more difficult to classify.
+
+These results provide a baseline for future improvements.
+
+**Note:** The trained model (`text_emotion_model.joblib`) is generated locally and is not included in Git version control.
