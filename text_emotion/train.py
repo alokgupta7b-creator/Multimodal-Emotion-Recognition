@@ -5,7 +5,7 @@ import joblib
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.metrics import accuracy_score, classification_report, f1_score
 from sklearn.pipeline import Pipeline
 
 # Project paths
@@ -41,18 +41,33 @@ y_train = train_df["Emotion"]
 X_dev, y_dev = dev_df["Utterance"], dev_df["Emotion"]
 X_test, y_test = test_df["Utterance"], test_df["Emotion"]
 
+
+from sklearn.pipeline import FeatureUnion
+
 model = Pipeline([
-    ("tfidf", TfidfVectorizer(
-        lowercase=True,
-        ngram_range=(1, 2),
-        max_features=50000,
-        sublinear_tf=True
-    )),
+    ("features", FeatureUnion([
+        ("word_tfidf", TfidfVectorizer(
+            analyzer="word",
+            ngram_range=(1, 2),
+            max_features=40000,
+            sublinear_tf=True
+        )),
+        ("char_tfidf", TfidfVectorizer(
+            analyzer="char",
+            ngram_range=(2, 5),
+            max_features=30000,
+            sublinear_tf=True,
+            min_df=2
+        ))
+    ])),
     ("classifier", LogisticRegression(
-        max_iter=1000,
-        class_weight="balanced"
+        max_iter=1500,
+        class_weight="balanced",
+        C=1.0,
+        random_state=42
     ))
 ])
+
 
 print("Training text emotion model on MELD...")
 print(f"Training samples: {len(X_train)}")
@@ -63,6 +78,7 @@ model.fit(X_train, y_train)
 
 # Validation evaluation
 dev_predictions = model.predict(X_dev)
+print(f"Validation Macro F1: {f1_score(y_dev, dev_predictions, average='macro'):.4f}")
 print("\n--- MELD Validation Results ---")
 print(f"Accuracy: {accuracy_score(y_dev, dev_predictions):.4f}")
 print(classification_report(y_dev, dev_predictions, zero_division=0))
