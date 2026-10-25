@@ -1,30 +1,35 @@
 
+from pathlib import Path
+
 import joblib
 from text_emotion.preprocessing import preprocess_text
 
-# Load the trained model
-model = joblib.load("text_emotion_model.joblib")
+ROOT = Path(__file__).resolve().parent.parent
+MODEL_PATH = ROOT / "text_emotion_model.joblib"
 
-# Emotion labels from the dataset
-emotion_labels = {
-    0: "Sadness",
-    1: "Joy",
-    2: "Love",
-    3: "Anger",
-    4: "Fear",
-    5: "Surprise"
-}
+if not MODEL_PATH.exists():
+    raise FileNotFoundError(
+        f"Model not found at {MODEL_PATH}. Run python -m text_emotion.train first."
+    )
 
-# Test your own sentences
+model = joblib.load(MODEL_PATH)
+
+print("MELD Text Emotion Predictor")
+print("Supported emotions: anger, disgust, fear, joy, neutral, sadness, surprise")
+print("Type 'exit' to quit.\n")
+
 while True:
-    text = input("\nEnter a sentence (or type 'exit' to stop): ")
+    text = input("Enter a sentence: ").strip()
 
     if text.lower() == "exit":
+        print("Goodbye!")
         break
+
+    if not text:
+        print("Please enter a sentence.")
+        continue
 
     cleaned_text = preprocess_text(text)
     prediction = model.predict([cleaned_text])[0]
 
-    print("Predicted Emotion:", emotion_labels.get(
-        int(prediction), "Unknown"
-    ))
+    print(f"Predicted emotion: {prediction}\n")
