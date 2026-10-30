@@ -180,23 +180,30 @@ All raw media files, large precomputed feature matrices (`.npy`, `.h5`, `.csd`),
 
 ## Text Emotion Recognition Module
 
-This module predicts emotions from text using TF-IDF feature extraction and Logistic Regression, trained on the MELD dataset.
+This module predicts emotions from text using Machine Learning techniques. It uses the MELD dataset, TF-IDF feature extraction, and Logistic Regression to classify text into seven emotion categories.
 
 ### Features
+
 - Text preprocessing and cleaning.
-- TF-IDF feature extraction using unigrams and bigrams.
-- Logistic Regression with class balancing.
-- Prediction of seven emotions: anger, disgust, fear, joy, neutral, sadness, and surprise.
-- Evaluation using accuracy, precision, recall, F1-score, and a confusion matrix.
+- Word-level TF-IDF using unigrams and bigrams.
+- Character-level TF-IDF using character n-grams.
+- Logistic Regression with balanced class weights.
+- Seven emotion categories: anger, disgust, fear, joy, neutral, sadness, and surprise.
+- Hyperparameter tuning using validation data.
+- Model evaluation using accuracy, precision, recall, F1-score, and confusion matrix.
 
-### Dataset Setup
+### Dataset
 
-Download the MELD dataset and locate these files:
+The model uses the official MELD dataset.
+
+Required CSV files:
 - `train_sent_emo.csv`
 - `dev_sent_emo.csv`
 - `test_sent_emo.csv`
 
-Place the `meld_dataset` folder in the parent directory of the repository, matching the path configured in `text_emotion/train.py`. The dataset is not included in Git version control.
+Place the downloaded `meld_dataset` folder in the parent directory of the repository, as configured in the training script.
+
+The dataset is not included in Git version control.
 
 ### Installation
 
@@ -209,6 +216,21 @@ python -m pip install pandas scikit-learn joblib
 ```bash
 python -m text_emotion.train
 ```
+
+The training script:
+- Loads the official MELD training, validation, and test splits.
+- Extracts word and character TF-IDF features.
+- Trains a Logistic Regression classifier.
+- Evaluates validation and test performance.
+- Saves the trained model as `text_emotion_model.joblib`.
+
+### Tune Hyperparameters
+
+```bash
+python -m text_emotion.tune
+```
+
+The tuning script compares different Logistic Regression regularization values (`C = 1.0, 2.0, 3.0, 4.0`) using validation data and reports accuracy and macro F1-score.
 
 ### Predict an Emotion
 
@@ -224,10 +246,32 @@ Enter a sentence when prompted. Type `exit` to stop.
 python -m text_emotion.evaluate
 ```
 
-### Results
+This evaluates the saved model using the official MELD test split and displays the classification report and confusion matrix.
 
-The model achieved **41.38% test accuracy** on 2,610 samples from the official MELD test split. The weighted F1-score was **0.43**. Performance varies across emotion classes, with less frequent emotions being more difficult to classify.
+### Model Performance
 
-These results provide a baseline for future improvements.
+The selected configuration uses:
+- Word and character TF-IDF features.
+- Logistic Regression.
+- Class balancing enabled.
+- Regularization parameter: `C = 1.0`.
+
+Results on the official MELD test split:
+
+| Metric | Result |
+|---|---:|
+| Test samples | 2,610 |
+| Accuracy | 51.46% |
+| Macro F1-score | 0.38 |
+| Weighted F1-score | 0.53 |
+
+Performance varies across emotion categories. Neutral and surprise are classified more effectively, while fear and disgust remain challenging due to limited training examples and class imbalance.
+
+### Future Improvements
+
+- Improve recognition of minority emotion classes.
+- Experiment with transformer-based text emotion models.
+- Optimize feature extraction and classification.
+- Integrate text predictions with speech and facial emotion recognition modules.
 
 **Note:** The trained model (`text_emotion_model.joblib`) is generated locally and is not included in Git version control.
