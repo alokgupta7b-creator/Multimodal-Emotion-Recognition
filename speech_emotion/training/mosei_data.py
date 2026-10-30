@@ -4,7 +4,6 @@ speech_emotion.training.mosei_data
 Data loading, interval feature pooling, and label harmonization
 for CMU-MOSEI acoustic emotion and sentiment recognition.
 """
-```python
 from __future__ import annotations
 
 import dataclasses
@@ -33,7 +32,6 @@ DEFAULT_MOSEI_DIR = Path(
 )
 
 COVAREP_FEATURE_DIM = 74
-```
 
 # Canonical 1-to-1 ontological mapping from MOSEI dominant emotion to canonical 7-class emotion
 MOSEI_TO_CANONICAL_EMOTION: Dict[str, str] = {
