@@ -286,3 +286,11 @@ checkpoints/
 
 # Locally trained text emotion model
 text_emotion_model.joblib
+
+# Keep only required probability files for multimodal fusion
+features/fusion/*
+!features/fusion/speech_dev_probabilities.csv
+!features/fusion/speech_test_probabilities.csv
+!features/fusion/visual_dev_probabilities.csv
+!features/fusion/visual_test_probabilities.csv
+
