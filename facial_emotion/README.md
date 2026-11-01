@@ -184,4 +184,17 @@ The following components have been implemented:
 - Classifier comparison
 - Development and test probability generation
 
+
+## Running on Another Machine
+
+The paths in `facial_emotion/config.py` are currently configured for the original development machine. Before running the pipeline on another computer, update the following paths in `config.py`:
+
+- `video_root`: Set this to the location of the extracted MELD video dataset.
+- `manifest_root`: Set this to the location of the MELD manifest CSV files in the repository.
+- `output_dir`: Set this to a writable output directory on the new machine.
+
+Install the required Python dependencies using the project's `requirements.txt` and ensure the compatible Python and MediaPipe versions are installed. Then run the feature extraction, validation, and training scripts in the documented order.
+
+The generated feature batches and trained model are stored in the configured output directory and must be regenerated on the new machine.
+
 The module is ready for further experimentation and integration with the other emotion recognition branches.
