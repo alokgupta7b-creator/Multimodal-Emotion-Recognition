@@ -191,12 +191,14 @@ This module predicts emotions from text using Machine Learning techniques. It us
 - Seven emotion categories: anger, disgust, fear, joy, neutral, sadness, and surprise.
 - Hyperparameter tuning using validation data.
 - Model evaluation using accuracy, precision, recall, F1-score, and confusion matrix.
+- Emotion probability generation for multimodal fusion.
 
 ### Dataset
 
 The model uses the official MELD dataset.
 
 Required CSV files:
+
 - `train_sent_emo.csv`
 - `dev_sent_emo.csv`
 - `test_sent_emo.csv`
@@ -218,6 +220,7 @@ python -m text_emotion.train
 ```
 
 The training script:
+
 - Loads the official MELD training, validation, and test splits.
 - Extracts word and character TF-IDF features.
 - Trains a Logistic Regression classifier.
@@ -251,9 +254,10 @@ This evaluates the saved model using the official MELD test split and displays t
 ### Model Performance
 
 The selected configuration uses:
+
 - Word and character TF-IDF features.
 - Logistic Regression.
-- Class balancing enabled.
+- Class balancing enabled (`class_weight="balanced"`).
 - Regularization parameter: `C = 1.0`.
 
 Results on the official MELD test split:
@@ -266,6 +270,39 @@ Results on the official MELD test split:
 | Weighted F1-score | 0.53 |
 
 Performance varies across emotion categories. Neutral and surprise are classified more effectively, while fear and disgust remain challenging due to limited training examples and class imbalance.
+
+### Text Emotion Probabilities for Multimodal Fusion
+
+To support integration with the speech and facial emotion recognition modules, this module exports class probabilities for each text sample.
+
+Run:
+
+```bash
+python -m text_emotion.export_fusion_probabilities
+```
+
+The script:
+
+- Loads the trained Logistic Regression model.
+- Reads MELD development and test annotations.
+- Matches utterances with manifest `sample_id` values.
+- Generates probability scores for all seven emotion categories.
+- Validates probability values and ensures each row sums to approximately 1.
+
+**Generated output files:**
+
+| File | Number of samples |
+|---|---:|
+| `features/fusion/text_dev_probabilities.csv` | 1,109 |
+| `features/fusion/text_test_probabilities.csv` | 2,610 |
+
+**CSV structure:**
+
+```text
+sample_id,anger,disgust,fear,joy,neutral,sadness,surprise
+```
+
+Each row contains a sample ID and its predicted probability for each emotion category. The `sample_id` column allows the text predictions to be aligned with corresponding speech and facial predictions during multimodal fusion.
 
 ### Future Improvements
 
