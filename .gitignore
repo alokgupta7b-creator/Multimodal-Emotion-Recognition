@@ -286,3 +286,7 @@ checkpoints/
 
 # Locally trained text emotion model
 text_emotion_model.joblib
+!features/
+!features/fusion/
+!features/fusion/text_dev_probabilities.csv
+!features/fusion/text_test_probabilities.csv
