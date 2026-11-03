@@ -135,6 +135,22 @@ threshold from in-sample instead of out-of-fold scores gave the same thresholds 
 model; the grouped procedure matters when more is fitted on dev, and costs nothing. This is text only: nothing is known yet about the fused
 output with audio and face.
 
+## Evaluating real predictions
+
+`python -m fusion.experiments.evaluate_real --data DIR [--config cfg.json]` evaluates on prediction files and invents nothing. Files in `DIR`
+(CSV with header, written by the model owners from models trained on `train` only):
+
+* `labels_dev.csv`, `labels_test.csv`: `sample_id,label,dialogue_id` (label is a MELD class name)
+* `probs_<dev|test>_<text|audio|face>.csv`: `sample_id,anger,disgust,fear,joy,neutral,sadness,surprise` (columns matched by name)
+
+A sample absent from a model's file counts as that modality being unavailable for it; an unknown or duplicate id, a missing or extra column,
+a non-numeric cell, a modality with only one split, or no prediction files at all is an error (exit code 2, no output written).
+Everything is chosen on dev (candidate by dialogue-grouped out-of-fold macro-F1; abstention threshold; conflict-flag decision) and one frozen choice
+is reported on test: each modality alone, equal-weight baseline, all candidates, the selected configuration for every subset of modalities
+available at test time, abstention, per-class precision/recall inputs and confusion matrices, plus SHA-256 and row counts of every input file.
+It has been run on real **text-only** outputs (reproduces the numbers above) and its mechanics are unit-tested on synthetic files; it has
+**not** been run on real multi-modal predictions because none exist yet. It cannot verify that the files really come from the stated models.
+
 ## Configuration
 
 Every tunable value lives in `FusionConfig` (`ReliabilityAwareFuser(FusionConfig(...))` or keyword overrides). `basis` says why a
@@ -150,6 +166,7 @@ choice with no supporting measurement, `engineering` = numerical safeguard. Noth
 | `model_priors` | `{}` | assumption | Per-modality class prior that the model's probabilities ASSUME (the prior of its training distribution): 'uniform' (default) or one positive number per label, in label order. class_weight='balanced' training -> uniform; unweighted training -> the training class frequencies. It is divided out before pooling so a prior is not counted once per model (Bayes: P(c|x_1..x_M) ~ pi_t(c) * prod_m p_m(c|x_m) / pi_m(c)). Declared by the model owner, never estimated here; a wrong declaration makes results worse, not better. Partial-support modalities must stay 'uniform'. |
 | `target_prior` | `'uniform'` | assumption | Class prior of the FUSED output, applied exactly once: 'uniform' (default: no prior imposed; suits macro-F1 / balanced accuracy), 'dev' (class frequencies of the y_dev given to fit(), Laplace-smoothed; suits accuracy) or an explicit vector. This is a real accuracy / macro-F1 trade-off, not a free gain: on the real MELD text model alone (independent reproduction, text only) moving uniform -> dev frequencies raised test accuracy 0.516 -> 0.597 and lowered test macro-F1 0.378 -> 0.347. |
 | `target_prior_power` | `1.0` | assumption | Exponent alpha in [0, 1] applied to a non-uniform target prior (pi_t ~ pi^alpha): 0 = uniform, 1 = as given. Interpolates between the two objectives (text-only check on real MELD outputs: alpha=0.5 gave test accuracy 0.582 / macro-F1 0.379 vs 0.516 / 0.378 for uniform). Choose it on dev data only. Ignored when target_prior is 'uniform'. Setting any prior option also switches calibration to the prior-aware form: only the evidence log p - log pi_m is scaled by 1/T, and T is fitted against the dev class prior. |
+| `calibrate_fused` | `False` | evidence | Fit one extra temperature on the FUSED dev output (after pooling) and apply it to every fused output. Argmax is unchanged; only confidence changes. Calibrating each model separately does not make the pooled probabilities calibrated when modality errors are correlated: in simulation with shared noise (rho=0.6) log-pooled NLL was 1.29 vs 1.09 for linear, and the fused temperature recovers most of that (see results/correlated_errors.json). One temperature is fitted on all-modalities-present dev rows, so it is only approximately right when modalities are missing at run time. Needs fit(). |
 | `pooling` | `'linear'` | assumption | 'linear' = weighted mean of probabilities (project-brief formula). 'log' = weighted product of experts. Log scored higher on SIMULATED data (+0.023 mean macro-F1, better in 8 of 9 scenarios, never worse), but that simulation assumes independent errors, which favours log by construction; choose after correlated-error and real-dev results. |
 | `use_calibration` | `True` | evidence | Temperature-scale each modality (fit on dev data only; needs fit(), an un-fitted fuser warns once and applies nothing). Switching it off cost 0.038 macro-F1 on average in the simulation (worse in 8 of 9 scenarios) -- but the simulated models are over-confident by construction, so real-data benefit is unverified. |
 | `use_priors` | `False` | evidence | Multiply weights by each modality's dev macro-F1. Simulated: -0.004 mean macro-F1 with linear pooling (worse in 5 of 9 scenarios, best case +0.003) and -0.002 with log. F1 values from different class subsets are also not directly comparable. Revisit in the prior-correction stage. |
@@ -171,6 +188,9 @@ python -m pytest fusion/tests -q                      # fusion-specific unit tes
 python -m fusion.experiments.synthetic_experiment     # ~2 min, writes fusion/results/synthetic_results.json
 python -m fusion.experiments.isolated_options         # ~15 s, writes fusion/results/isolated_options.json
 python -m fusion.experiments.prior_correction         # a few seconds, writes fusion/results/prior_correction.json
+python -m fusion.experiments.correlated_errors        # ~20 s, writes fusion/results/correlated_errors.json
+python -m fusion.experiments.conflict_rule            # ~15 s, writes fusion/results/conflict_rule.json
+python -m fusion.experiments.evaluate_real --data DIR # real predictions from files, see "Evaluating real predictions"
 ```
 
 ### Simulated results (not real-data performance)
@@ -207,13 +227,56 @@ Honest reading:
 
 * Calibration is the largest effect, but the simulated models are over-confident by construction. Whether the real models
   need it is unknown.
-* Log pooling beats linear in every scenario with more than one modality, but it is exactly the case the simulator favours.
-  The default stays `linear` until correlated errors and real dev predictions have been tested.
+* Log pooling beats linear in every scenario with more than one modality, but only because this simulator's errors are independent.
+  With correlated errors that advantage disappears (next section). The default stays `linear`.
 * No weighting factor shows a consistent gain, so all are off by default. The dev-stress tuner in `synthetic_experiment.py` does
   switch quality and consistency on, but that selection does not hold up when each factor is isolated.
-* The default conflict rule is **not discriminative** in the simulation (flags 65 % of clean samples vs 74 % with injected
+* The fixed default conflict rule is **not discriminative** in the simulation (flags 65 % of clean samples vs 74 % with injected
   conflicts), while fused confidence detects errors better (AUROC 0.76 vs 0.62). Abstaining on the 20 % least-confident
-  predictions raised simulated accuracy 0.718 to 0.790. The rule is to be replaced by a dev-derived one.
+  predictions raised simulated accuracy 0.718 to 0.790. Both are now chosen from dev data, see "Abstention" and "Conflict flag".
+
+### Correlated errors (simulated, not real-data performance)
+
+Real modalities share errors, so `correlated_errors.py` adds a noise term common to all modalities (`rho` = its share) and a shared
+"confuser" class that pushes every modality to the same wrong answer. Cells are macro-F1 / NLL of the fused output, mean of 5 draws,
+calibration fitted on a dev draw of the same process; `fusedT` is `calibrate_fused=True` (argmax, hence macro-F1, is unchanged by it).
+
+| setting (simulated) | linear | log | linear + fusedT | log + fusedT |
+|---|---|---|---|---|
+| independent errors (rho=0) | 0.811 / 0.98 | 0.840 / 0.47 | 0.811 / 0.56 | 0.840 / 0.47 |
+| shared noise rho=0.3 | 0.717 / 1.03 | 0.721 / 0.87 | 0.717 / 0.82 | 0.721 / 0.79 |
+| shared noise rho=0.6 | 0.646 / 1.09 | 0.637 / 1.29 | 0.646 / 1.01 | 0.637 / 1.01 |
+| shared noise rho=0.9 | 0.589 / 1.17 | 0.577 / 1.70 | 0.589 / 1.16 | 0.577 / 1.17 |
+| shared confuser, 20% of samples | 0.592 / 1.32 | 0.589 / 1.52 | 0.592 / 1.24 | 0.589 / 1.25 |
+| shared confuser, 40% of samples | 0.467 / 1.50 | 0.461 / 1.83 | 0.467 / 1.46 | 0.461 / 1.48 |
+| rho=0.6, audio signal x0.5 at test | 0.577 / 1.24 | 0.556 / 1.66 | 0.577 / 1.21 | 0.556 / 1.23 |
+| rho=0.6, audio signal x0.0 at test | 0.528 / 1.35 | 0.475 / 2.10 | 0.528 / 1.36 | 0.475 / 1.48 |
+
+* Log pooling's advantage (+0.029 macro-F1 at rho=0) shrinks to +0.004 at rho=0.3 and reverses from rho=0.6 on (-0.009 to -0.012); with a degraded modality that
+  calibration did not anticipate, linear is 0.02 to 0.05 better. A product of experts counts shared evidence more than once.
+* Under correlation log pooling is also **over-confident** (NLL 1.29 vs 1.09 at rho=0.6), which would distort confidence-based
+  abstention. One temperature fitted on the fused dev output repairs most of it (log 1.29 -> 1.01) and also helps linear pooling.
+  It is opt-in (`calibrate_fused`) because the evidence is simulated.
+* So the defaults (`linear`, per-model calibration) stay; `log` is only justified if real dev predictions show conditionally
+  independent errors, which `evaluate_real` lets the team check (out-of-fold macro-F1 selects the candidate).
+
+### Conflict flag
+
+The fixed default (`conflict_threshold=0.25`) is a placeholder. `select_conflict_threshold` (in `fusion/abstention.py`) enables the
+flag only if, on out-of-fold dev data, the most-disagreeing 20 % of rows with two or more modalities are wrong at least 1.2x as
+often as the rest and a one-sided z-test reaches 5 %; otherwise it returns `None` and the flag should stay off.
+
+| setting (simulated) | dev rule accepts the flag (of 5 draws) | mean lift | default 0.25 rule: rows flagged | error flagged / unflagged |
+|---|---|---|---|---|
+| independent errors | 5 | 1.48 | 68% | 0.23 / 0.12 |
+| shared noise rho=0.6 | 0 | 0.95 | 15% | 0.32 / 0.36 |
+| one modality misleading on 25% of rows | 0 | 1.07 | 65% | 0.25 / 0.21 |
+| shared confuser 30% | 0 | 0.74 | 2% | 0.26 / 0.47 |
+
+Disagreement signals error only when errors are independent; when modalities agree on the same wrong answer it is uninformative or
+even inverted (lift 0.74 with a shared confuser), and a single corrupted modality that the others outvote does not make the *fused*
+answer wrong, so the flag does not detect it. The rule therefore says "off" where the flag would mislead. The default threshold was
+not changed, to avoid silently altering the integrated output.
 
 ## Known gaps
 
@@ -226,5 +289,6 @@ Honest reading:
 3. **Speech model:** reported MELD test accuracy 23.2 % (macro-F1 0.19). The repo's `speech_emotion/training/mosei_data.py`
    currently has a stray markdown fence on line 7 (a `SyntaxError`) that prevents importing the package; that file is not part of this module.
 4. **Face model:** not in the repository yet.
-5. **Open in this module:** correlated-error experiments; replacing the conflict flag (the confidence-based abstention above is in place); calibration of the *fused* output (only single
-   models were checked on real data).
+5. **Untested on real multi-modal data:** every fusion comparison, the choice between linear and log pooling, `calibrate_fused`,
+   the conflict-flag decision and the abstention threshold with more than one modality. The tools to do it on real predictions
+   (`evaluate_real`) exist; the predictions do not.
