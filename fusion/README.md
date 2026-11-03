@@ -3,8 +3,8 @@
 Decision-level fusion of the text, speech and face emotion models. Owner: Alok.
 Integration contract: see "Interface" below. Design of the text-model policy: [`DESIGN_partial_support.md`](DESIGN_partial_support.md).
 
-> **Status.** Verified: the code, by unit tests on synthetic inputs. Real predictions exist for all three modalities (speech and face as exported by their
-> owners; text = my independent reproduction of the text owner's pipeline, not their saved file), and the real-data fusion results are in
+> **Status.** Verified: the code, by unit tests on synthetic inputs. Real predictions exist for all three modalities (all three as exported by their
+> owners: text, speech, and face from PR #1), and the real-data fusion results are in
 > "First results on real predictions". Every performance number in the *simulated* sections says nothing about MELD or CMU-MOSEI.
 
 ## Interface
@@ -138,51 +138,50 @@ threshold from in-sample instead of out-of-fold scores gave the same thresholds 
 model; the grouped procedure matters when more is fitted on dev, and costs nothing. This is text only: nothing is known yet about the fused
 output with audio and face.
 
-## First results on real predictions (text reproduction + speech + face)
+## First results on real predictions (text + speech + face)
 
 Inputs: **speech** = `features/fusion/speech_{dev,test}_probabilities.csv` (speech owner; 1,105 of 1,109 dev and 2,606 of 2,610 test utterances);
 **face** = `features/fusion/visual_{dev,test}_probabilities.csv` from the face owner's open pull request #1 (commit `4d0367e`; 1,078 and 2,548 utterances;
-my metrics from the MELD labels reproduce their reported 0.200 accuracy / 0.177 macro-F1 exactly); **text** = my independent reproduction of
-`text_emotion/train.py` (the text owner's own probability file is not in the repository; their reported 51.46 % / macro-F1 0.38 matches my 0.516 / 0.378).
+my metrics from the MELD labels reproduce their reported 0.200 accuracy / 0.177 macro-F1 exactly); **text** = `features/fusion/text_{dev,test}_probabilities.csv` (text owner, commits `6307cb5` and `97b8d1a`; all 1,109 dev and 2,610 test utterances; ids match the MELD labels, rows sum to 1, no NaN or duplicates; from the file I get 0.524 accuracy / 0.377 macro-F1 on test, against their reported 51.46 % / 0.38; I did not establish why accuracy differs by about one point). An earlier run used my own reproduction of the text pipeline; the conclusions below did not change.
 Utterances a model has no output for (no face, no audio) are a missing modality for that sample. Everything is chosen on dev only (pooling x
 reliability weighting by dialogue-grouped out-of-fold macro-F1), one test set (2,610 utterances), uncertainty by paired bootstrap over test **dialogues**
 (95 % intervals). Reproduce with the command in "Evaluating real predictions". Result files: `results/real_eval_3mod_*.json`.
 
-Single models on test: text 0.516 accuracy / 0.378 macro-F1; speech 0.494 / 0.131 (it labels 95 % of utterances neutral and its mean probabilities
+Single models on test: text 0.524 accuracy / 0.377 macro-F1; speech 0.494 / 0.131 (it labels 95 % of utterances neutral and its mean probabilities
 equal the natural class frequencies, i.e. it mostly returns the class prior; with that prior divided out it is 0.262 / 0.199); face 0.200 / 0.177
 (class-balanced, mean probabilities near uniform). Priors declared: text and face `"uniform"` (balanced training), speech = MELD train frequencies
-(**inferred** from its outputs, not confirmed by its owner).
+(**inferred** from its outputs, not confirmed by its owner). The text owner's mean probabilities are not uniform (neutral about 0.25), which is normal for a balanced model; I kept the `"uniform"` declaration, which should be confirmed with them.
 
 Fusion of all three, two operating points (the target prior is an accuracy vs macro-F1 choice, see "Class priors"), as selected on dev:
 
 | operating point | selected on dev | accuracy | macro-F1 | vs text alone, accuracy | vs text alone, macro-F1 | vs equal-weight, accuracy | vs equal-weight, macro-F1 |
 |---|---|---|---|---|---|---|---|
-| uniform target | linear, no weighting | 0.528 | 0.393 | +0.012 [-0.003, +0.028] | +0.015 [0.000, +0.030] | -0.060 [-0.080, -0.040] | +0.049 [+0.024, +0.073] |
-| dev-frequency target | log + confidence weighting | 0.598 | 0.370 | +0.003 [-0.012, +0.020] | +0.038 [+0.022, +0.054] | +0.010 [-0.003, +0.024] | +0.026 [+0.009, +0.042] |
+| uniform target | linear, no weighting | 0.534 | 0.390 | +0.011 [-0.004, +0.025] | +0.013 [-0.002, +0.030] | -0.052 [-0.071, -0.031] | +0.053 [+0.030, +0.078] |
+| dev-frequency target | log + all weighting | 0.603 | 0.382 | +0.009 [-0.004, +0.025] | +0.054 [+0.034, +0.076] | +0.017 [+0.004, +0.030] | +0.045 [+0.024, +0.066] |
 
 ("vs text alone" uses the text model under the same configuration; "equal-weight" is the plain average of the three models' probabilities.) With the
-priors not declared (plain pooling, reference only) the selected log + priors configuration gives 0.588 / 0.397; its implied prior is whatever the
+priors not declared (plain pooling, reference only) the selected log + priors configuration gives 0.590 / 0.395; its implied prior is whatever the
 models happen to embed (here only speech's), so it is an uncontrolled operating point and not comparable like for like.
 
 What the evidence supports, and what it does not:
 
-* Fusion clearly beats speech alone (macro-F1 +0.19 to +0.21) and face alone (+0.22 to +0.25).
-* Over the **text model alone the gain is small**: macro-F1 +0.015 (interval touches 0) to +0.038, and **no detectable accuracy gain**. Text carries the
-  system: removing it costs 0.16 to 0.17 macro-F1.
-* **Speech and face add little, and not consistently.** Dropping speech costs macro-F1 +0.015 [+0.004, +0.027] at the uniform target but -0.003 [-0.023, +0.014]
-  at the dev-frequency target; dropping face costs +0.010 [-0.002, +0.023] and +0.023 [+0.013, +0.033]. Which one helps depends on the operating point.
-* Over the project's **equal-weight baseline** macro-F1 improves by +0.026 to +0.049; accuracy improves only at the dev-frequency target (+0.010, within noise).
+* Fusion clearly beats speech alone (macro-F1 +0.19 to +0.23) and face alone (+0.21 to +0.27).
+* Over the **text model alone the gain is small**: macro-F1 +0.013 (interval includes 0) to +0.054, and **no detectable accuracy gain**. Text carries the
+  system: removing it costs 0.17 to 0.18 macro-F1.
+* **Speech and face add little, and not consistently.** Dropping speech costs macro-F1 +0.014 [0.000, +0.029] at the uniform target and +0.008 [-0.004, +0.021]
+  at the dev-frequency target; dropping face costs +0.002 [-0.012, +0.016] and +0.019 [+0.008, +0.033]. Which one helps depends on the operating point.
+* Over the project's **equal-weight baseline** macro-F1 improves by +0.045 to +0.053; accuracy improves only at the dev-frequency target (+0.017 [+0.004, +0.030]) and falls at the uniform target (-0.052).
 * The gains come mainly from **prior handling and calibration, not from reliability weighting**. Dev selected no weighting at the uniform target and
   confidence weighting at the other; an exploratory look at each factor on test was mixed (none helped at the uniform target; some did at the other) and is
   not corrected for the number of comparisons. Quality weighting was not tested: no quality scores exist.
-* **Calibration of the fused output:** `calibrate_fused` (one temperature per availability pattern) lowers test NLL / ECE from 1.584 / 0.268 to 1.343 / 0.042 at
-  the uniform target and from 1.277 / 0.087 to 1.214 / 0.072 at the other, without changing any prediction. A single temperature fitted with all modalities
+* **Calibration of the fused output:** `calibrate_fused` (one temperature per availability pattern) lowers test NLL / ECE from 1.582 / 0.275 to 1.333 / 0.045 at
+  the uniform target and from 1.335 / 0.122 to 1.199 / 0.072 at the other, without changing any prediction. A single temperature fitted with all modalities
   present would have *hurt* missing-modality cases (text alone, linear: NLL 1.366 -> 1.700), which is why it is per pattern.
-* **Abstention** at 80 % target coverage (threshold from dev): error among the kept predictions 0.418 vs 0.472 overall (uniform target) and 0.355 vs 0.402.
+* **Abstention** at 80 % target coverage (threshold from dev): error among the kept predictions 0.412 vs 0.466 overall (uniform target) and 0.343 vs 0.397.
 * The **conflict flag** was rejected on dev in every run (disagreement did not predict errors).
 * Differences between the configurations in the table are about as large as their intervals: do not read a ranking from them.
 
-Limits: one test split; the text side is a reproduction; speech's training prior is inferred; the analyses were not corrected for multiple comparisons; the
+Limits: one test split; speech's training prior is inferred; the analyses were not corrected for multiple comparisons; the
 speech and face files are as stated by their owners (trained on `train` only), not verified here.
 
 ## Evaluating real predictions
@@ -338,10 +337,8 @@ not changed, to avoid silently altering the integrated output.
 
 ## Known gaps
 
-1. **The text predictions are a reproduction.** Speech and face files come from their owners; the text owner's own probability file is not in the repository.
-   All three models need to be confirmed as trained on `train` only, on identical sample ids. Needed: all three on the same MELD dev and test `sample_id`s, trained on `train` only.
-2. **Text model:** `text_emotion/` now trains on MELD (7 classes; reported ~51 % accuracy). I reproduced that independently
-   (text only) but no prediction file from the team's own run is in the repository, so it is not verified from their artifact.
+1. **Provenance is unverified.** All three prediction files come from their owners (face from the open PR #1). Needed: confirmation that all three were trained on `train` only, and the text and face priors confirmed as `"uniform"`.
+2. **Text model:** `text_emotion/` trains on MELD (7 classes). The owner's probability file is now used directly (see above).
    `text_emotion/predict.py` preprocesses text while `train.py` / `evaluate.py` use raw text, and the README still quotes an old
    41.38 %: both are the text owner's to fix. The partial-support policy remains for any model that lacks classes.
 3. **Speech model:** the exported probabilities are close to the class prior (95 % of test utterances labelled neutral, macro-F1 0.13; 0.20 after
