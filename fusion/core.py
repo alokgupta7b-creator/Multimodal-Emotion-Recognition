@@ -160,22 +160,46 @@ def _cond(P: np.ndarray, cols: np.ndarray) -> np.ndarray:
     return np.where(tot > _EPS, sub / np.clip(tot, _EPS, None), 1.0 / k)
 
 
-def _pool(Pm: np.ndarray, w: np.ndarray, pooling: str, smoothing: float) -> np.ndarray:
+def _pool(Pm: np.ndarray, w: np.ndarray, pooling: str, smoothing: float,
+          log_prior: Optional[np.ndarray] = None, log_target: Optional[np.ndarray] = None) -> np.ndarray:
     """Pool distributions ``Pm`` (M, n, k) with weights ``w`` (M, n); weight 0 = not participating.
 
-    linear: weighted mean. log: weighted geometric mean (product of experts) with weights
-    scaled to average 1 over participants, after mixing a little uniform mass into every
-    expert so that a tiny probability is not an absolute veto.
+    ``log_prior`` (M, k): log of the class prior each model's posterior ASSUMES (None = uniform).
+    ``log_target`` (k,): log of the class prior wanted in the output (None = uniform).
+
+    log: weighted product of experts (Bayes under conditionally independent modalities),
+        P(c) ~ pi_t(c) * prod_m [p_m(c) / pi_m(c)]^w_m, weights scaled to average 1 over
+        participants. Each model's own prior is divided out and the target prior is added ONCE,
+        so the implied prior does not depend on how many modalities are present. A little uniform
+        mass is mixed into every expert first so one tiny probability is not an absolute veto.
+    linear: weighted mean of the experts, each first converted from its own prior to the target
+        prior (p * pi_t / pi_m, renormalised). This is the exact conversion for a single expert;
+        a mixture has no joint Bayes identity, which is why log is the principled pooling here.
+    With both priors None the result is identical to the prior-free pooling.
     """
     k = Pm.shape[-1]
     total = w.sum(axis=0)
     wn = np.divide(w, total, out=np.zeros_like(w), where=total > 0)
     if pooling == "linear":
+        if log_prior is not None or log_target is not None:
+            adj = np.zeros((Pm.shape[0], 1, k))
+            if log_target is not None:
+                adj = adj + log_target
+            if log_prior is not None:
+                adj = adj - log_prior[:, None, :]
+            X = Pm * np.exp(adj - adj.max(axis=-1, keepdims=True))
+            s = X.sum(axis=-1, keepdims=True)
+            Pm = np.divide(X, s, out=np.zeros_like(X), where=s > 0)
         out = np.einsum("mn,mnk->nk", wn, Pm)
     else:
         n_used = (w > 0).sum(axis=0)
         Ps = (1.0 - smoothing) * Pm + smoothing / k
-        logp = np.einsum("mn,mnk->nk", wn * n_used, np.log(np.clip(Ps, _EPS, 1.0)))
+        L = np.log(np.clip(Ps, _EPS, 1.0))
+        if log_prior is not None:
+            L = L - log_prior[:, None, :]
+        logp = np.einsum("mn,mnk->nk", wn * n_used, L)
+        if log_target is not None:
+            logp = logp + log_target
         out = _softmax_rows(logp)
     out[total <= 0] = 1.0 / k
     return out
@@ -238,6 +262,44 @@ class ReliabilityAwareFuser:
         self._is_partial = np.array([not self._support[m].all() for m in config.modalities])
         partial_sets = [self._support[m] for m, p in zip(config.modalities, self._is_partial) if p]
         self._partial_mask: Optional[np.ndarray] = partial_sets[0] if partial_sets else None
+        # Declared training priors of the models (validated and normalised by FusionConfig).
+        lp = np.zeros((len(config.modalities), K))
+        self._has_model_prior = False
+        for i, m in enumerate(config.modalities):
+            v = config.model_priors.get(m, "uniform")
+            if not isinstance(v, str):
+                lp[i] = np.log(np.asarray(v, dtype=float))
+                self._has_model_prior = True
+        self._log_model_prior = lp
+        self._dev_prior: Optional[np.ndarray] = None      # set by fit(); used by target_prior="dev"
+
+    # ------------------------------------------------------------ class priors
+    def _target_log_prior(self) -> Optional[np.ndarray]:
+        """log of the output class prior (pi_t^alpha), or None when it is uniform."""
+        cfg = self.config
+        K = len(cfg.labels)
+        tp = cfg.target_prior
+        if isinstance(tp, str) and tp == "uniform":
+            return None
+        if isinstance(tp, str):                           # "dev"
+            if self._dev_prior is None:
+                raise FusionInputError(
+                    "target_prior='dev' needs the dev class frequencies: call fit(dev_probs, y_dev) first, "
+                    "or pass an explicit target_prior vector")
+            base = self._dev_prior
+        else:
+            base = np.asarray(tp, dtype=float)
+        if cfg.target_prior_power == 0:
+            return None
+        lt = cfg.target_prior_power * np.log(base)
+        return lt - np.log(np.exp(lt - lt.max()).sum()) - lt.max()    # normalised log prior, shape (K,)
+
+    @property
+    def resolved_target_prior(self) -> np.ndarray:
+        """The class prior the fused output is calibrated to (uniform unless configured otherwise)."""
+        lt = self._target_log_prior()
+        K = len(self.config.labels)
+        return np.full(K, 1.0 / K) if lt is None else np.exp(lt)
 
     def __getattr__(self, name):  # config options stay readable as attributes (f.pooling, ...)
         cfg = self.__dict__.get("config")
@@ -320,6 +382,8 @@ class ReliabilityAwareFuser:
             mean = float(np.mean(list(f1s.values())))
             for name, f in f1s.items():
                 priors[name] = f / mean
+        # Dev class frequencies (Laplace-smoothed so no class has prior 0), over ALL dev rows.
+        self._dev_prior = (np.bincount(y, minlength=K) + 1.0) / (len(y) + K)
         self.temperatures, self.priors = temps, priors
         self.fit_report = report
         self.fitted = True
@@ -438,7 +502,9 @@ class ReliabilityAwareFuser:
         # Base fusion: the full-support modalities only, exactly as if no partial-support modality
         # existed (so with no such modality configured this is the whole pooling step).
         w_full = np.where(self._is_partial[:, None], 0.0, w)
-        fused = _pool(P, w_full, cfg.pooling, cfg.smoothing)
+        lt = self._target_log_prior()                         # None unless a non-uniform target is set
+        lp = self._log_model_prior if self._has_model_prior else None
+        fused = _pool(P, w_full, cfg.pooling, cfg.smoothing, lp, lt)
         partial_only = np.zeros(N, dtype=bool)
         if self._partial_mask is not None:
             s = self._partial_mask
@@ -456,8 +522,15 @@ class ReliabilityAwareFuser:
                 bS = _cond(fused, s)                                              # base | S
                 mass_S = fused[:, s].sum(axis=1, keepdims=True)
                 Wb = w_full.sum(axis=0)
+                lt_s = None if lt is None else lt[s]
                 if cfg.pooling == "linear":
-                    num = Wb[:, None] * bS + np.einsum("mn,mnk->nk", w_part, Pc)
+                    # bS already carries the target prior; the partial conditionals get it too so
+                    # every expert in the mixture is on the same prior (model prior is uniform).
+                    Pcv = Pc
+                    if lt_s is not None:
+                        Pcv = Pc * np.exp(lt_s - lt_s.max())
+                        Pcv = Pcv / np.clip(Pcv.sum(axis=-1, keepdims=True), _EPS, None)
+                    num = Wb[:, None] * bS + np.einsum("mn,mnk->nk", w_part, Pcv)
                     q = num / np.clip(Wb + w_part.sum(axis=0), _EPS, None)[:, None]
                 else:
                     # Bayes-style update: q ~ base|S * prod_i t_i^nu_i, nu_i = weight relative to
@@ -472,7 +545,7 @@ class ReliabilityAwareFuser:
                 combo[:, s] = mass_S * q
                 fused[both] = combo[both]
                 only = np.full_like(fused, np.nan)                 # no full-support evidence at all:
-                only[:, s] = _pool(Pc, w_part, cfg.pooling, cfg.smoothing)   # restricted to S, flagged
+                only[:, s] = _pool(Pc, w_part, cfg.pooling, cfg.smoothing, None, lt_s)  # within S, flagged
                 fused[only_partial] = only[only_partial]
                 partial_only = only_partial
 

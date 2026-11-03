@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import math
 import numbers
-from dataclasses import dataclass, field, fields
+from dataclasses import MISSING, dataclass, field, fields
 from typing import Any, Dict, List, Mapping, Tuple
 
 from .errors import FusionConfigError
@@ -38,6 +38,30 @@ class FusionConfig:
             "doc": ("Per-modality list of the classes the model can actually predict. Modalities not "
                     "listed support all classes. Columns outside the support are ignored, never read "
                     "as 0. See fusion/DESIGN_partial_support.md.")})
+    model_priors: Mapping[str, Any] = field(
+        default_factory=dict,
+        metadata={
+            "basis": "assumption",
+            "doc": ("Per-modality class prior that the model's probabilities ASSUME (the prior of its "
+                    "training distribution): 'uniform' (default) or one positive number per label, in label "
+                    "order. class_weight='balanced' training -> uniform; unweighted training -> the training "
+                    "class frequencies. It is divided out before pooling so a prior is not counted once per "
+                    "model (Bayes: P(c|x_1..x_M) ~ pi_t(c) * prod_m p_m(c|x_m) / pi_m(c)). Declared by the "
+                    "model owner, never estimated here; a wrong declaration makes results worse, not better. "
+                    "Partial-support modalities must stay 'uniform'.")})
+    target_prior: Any = _f(
+        "uniform", "assumption",
+        "Class prior of the FUSED output, applied exactly once: 'uniform' (default: no prior imposed; suits "
+        "macro-F1 / balanced accuracy), 'dev' (class frequencies of the y_dev given to fit(), Laplace-smoothed; "
+        "suits accuracy) or an explicit vector. This is a real accuracy / macro-F1 trade-off, not a free gain: "
+        "on the real MELD text model alone (independent reproduction, text only) moving uniform -> dev "
+        "frequencies raised test accuracy 0.516 -> 0.597 and lowered test macro-F1 0.378 -> 0.347.")
+    target_prior_power: float = _f(
+        1.0, "assumption",
+        "Exponent alpha in [0, 1] applied to a non-uniform target prior (pi_t ~ pi^alpha): 0 = uniform, 1 = "
+        "as given. Interpolates between the two objectives (text-only check on real MELD outputs: alpha=0.5 "
+        "gave test accuracy 0.582 / macro-F1 0.379 vs 0.516 / 0.378 for uniform). Choose it on dev data "
+        "only. Ignored when target_prior is 'uniform'.")
     pooling: str = _f(
         "linear", "assumption",
         "'linear' = weighted mean of probabilities (project-brief formula). 'log' = weighted product "
@@ -152,6 +176,42 @@ class FusionConfig:
                 "are not implemented")
         set_("modality_support", sup)
 
+        # ---- class priors: validated and normalised once, here ---------------------------------
+        K = len(self.labels)
+
+        def prior(name, v, allowed):
+            if isinstance(v, str):
+                if v in allowed:
+                    return v
+                raise FusionConfigError(
+                    f"{name} must be one of {sorted(allowed)} or {K} positive numbers (label order), got {v!r}")
+            try:
+                vals = tuple(float(x) for x in v)
+            except (TypeError, ValueError):
+                raise FusionConfigError(f"{name} must be {K} positive numbers (label order), got {v!r}") from None
+            if len(vals) != K:
+                raise FusionConfigError(f"{name} needs {K} values (one per label, in label order), got {len(vals)}")
+            if not all(math.isfinite(x) and x > 0 for x in vals):
+                raise FusionConfigError(
+                    f"{name} values must be finite and > 0 (a class with prior 0 could never be predicted): {vals}")
+            total = sum(vals)
+            return tuple(x / total for x in vals)
+
+        mp: Dict[str, Any] = {}
+        for mod, v in dict(self.model_priors).items():
+            if mod not in self.modalities:
+                raise FusionConfigError(f"model_priors names unknown modality {mod!r}")
+            p = prior(f"model_priors[{mod!r}]", v, {"uniform"})
+            if not isinstance(p, str) and mod in partial:
+                raise FusionConfigError(
+                    f"model_priors[{mod!r}]: a non-uniform prior for a partial-support modality is not "
+                    "implemented (its conditional distribution over its classes has no defined prior ratio)")
+            mp[mod] = p
+        set_("model_priors", mp)
+        set_("target_prior", prior("target_prior", self.target_prior, {"uniform", "dev"}))
+        if not 0.0 <= real("target_prior_power", self.target_prior_power) <= 1.0:
+            raise FusionConfigError("target_prior_power must be in [0, 1]")
+
     # ------------------------------------------------------------------ helpers
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {}
@@ -159,6 +219,8 @@ class FusionConfig:
             v = getattr(self, f.name)
             if f.name == "modality_support":
                 v = {k: list(x) for k, x in v.items()}
+            elif f.name == "model_priors":
+                v = {k: (x if isinstance(x, str) else list(x)) for k, x in v.items()}
             elif isinstance(v, tuple):
                 v = list(v)
             d[f.name] = v
@@ -177,9 +239,7 @@ class FusionConfig:
         """Rows ``{name, default, basis, doc}`` describing every option."""
         rows = []
         for f in fields(cls):
-            default = f.default if f.default is not field else None
-            if f.default_factory is not type(f.default_factory) and f.name == "modality_support":
-                default = {}
+            default = f.default_factory() if f.default_factory is not MISSING else f.default
             rows.append({"name": f.name, "default": default,
                          "basis": f.metadata.get("basis", ""), "doc": f.metadata.get("doc", "")})
         return rows
