@@ -3,10 +3,9 @@
 Decision-level fusion of the text, speech and face emotion models. Owner: Alok.
 Integration contract: see "Interface" below. Design of the text-model policy: [`DESIGN_partial_support.md`](DESIGN_partial_support.md).
 
-> **Status.** Verified: the code, by unit tests on synthetic inputs. Real predictions exist for **two of the three modalities**
-> (speech: exported by the speech owner; text: my independent reproduction of the text owner's pipeline, not their saved file; face: none),
-> so the only real-data fusion result is the preliminary text + speech check in "First check on real predictions". Every other performance
-> number below comes from a *simulator* and says nothing about MELD or CMU-MOSEI.
+> **Status.** Verified: the code, by unit tests on synthetic inputs. Real predictions exist for all three modalities (speech and face as exported by their
+> owners; text = my independent reproduction of the text owner's pipeline, not their saved file), and the real-data fusion results are in
+> "First results on real predictions". Every performance number in the *simulated* sections says nothing about MELD or CMU-MOSEI.
 
 ## Interface
 
@@ -139,35 +138,52 @@ threshold from in-sample instead of out-of-fold scores gave the same thresholds 
 model; the grouped procedure matters when more is fitted on dev, and costs nothing. This is text only: nothing is known yet about the fused
 output with audio and face.
 
-## First check on real predictions (preliminary: 2 of 3 modalities)
+## First results on real predictions (text reproduction + speech + face)
 
-Inputs: **speech** = `features/fusion/speech_{dev,test}_probabilities.csv` as pushed by the speech owner (1,105 of 1,109 dev and 2,606 of 2,610 test
-utterances; the 4 missing per split are treated as missing modality); **text** = my independent reproduction of `text_emotion/train.py`
-(not the text owner's saved output, which is not in the repository; their reported 51.46 % / macro-F1 0.38 matches my 0.516 / 0.378). No face model.
-Run with `evaluate_real` (`--probs audio=... --strip-split-prefix`), everything chosen on dev, one test set (2,610 utterances), uncertainty by
-paired bootstrap over test **dialogues** (1,000 resamples, 95 % interval), fused vs each model alone under the same configuration.
+Inputs: **speech** = `features/fusion/speech_{dev,test}_probabilities.csv` (speech owner; 1,105 of 1,109 dev and 2,606 of 2,610 test utterances);
+**face** = `features/fusion/visual_{dev,test}_probabilities.csv` from the face owner's open pull request #1 (commit `4d0367e`; 1,078 and 2,548 utterances;
+my metrics from the MELD labels reproduce their reported 0.200 accuracy / 0.177 macro-F1 exactly); **text** = my independent reproduction of
+`text_emotion/train.py` (the text owner's own probability file is not in the repository; their reported 51.46 % / macro-F1 0.38 matches my 0.516 / 0.378).
+Utterances a model has no output for (no face, no audio) are a missing modality for that sample. Everything is chosen on dev only (pooling x
+reliability weighting by dialogue-grouped out-of-fold macro-F1), one test set (2,610 utterances), uncertainty by paired bootstrap over test **dialogues**
+(95 % intervals). Reproduce with the command in "Evaluating real predictions". Result files: `results/real_eval_3mod_*.json`.
 
-What the speech outputs are: accuracy 0.494 on test but macro-F1 only 0.131, because it labels 95 % of utterances neutral; its mean predicted
-probabilities equal the natural class frequencies. It behaves like an unweighted model that mostly returns the class prior. That is why `model_priors` matters:
+Single models on test: text 0.516 accuracy / 0.378 macro-F1; speech 0.494 / 0.131 (it labels 95 % of utterances neutral and its mean probabilities
+equal the natural class frequencies, i.e. it mostly returns the class prior; with that prior divided out it is 0.262 / 0.199); face 0.200 / 0.177
+(class-balanced, mean probabilities near uniform). Priors declared: text and face `"uniform"` (balanced training), speech = MELD train frequencies
+(**inferred** from its outputs, not confirmed by its owner).
 
-| fusion configuration (log or linear as selected on dev) | accuracy | macro-F1 | fused minus text alone: accuracy | fused minus text alone: macro-F1 |
-|---|---|---|---|---|
-| text alone | 0.516 | 0.378 | | |
-| speech alone | 0.494 | 0.131 | | |
-| priors NOT declared (plain pooling) | 0.591 | 0.367 | +0.076 [+0.059, +0.093] | -0.011 [-0.031, +0.009] |
-| speech prior declared (train frequencies), uniform target | 0.526 | 0.383 | +0.011 [-0.002, +0.023] | +0.005 [-0.008, +0.017] |
-| speech prior declared, dev-frequency target | 0.595 | 0.343 | -0.001 [-0.012, +0.011] | +0.011 [-0.001, +0.023] |
+Fusion of all three, two operating points (the target prior is an accuracy vs macro-F1 choice, see "Class priors"), as selected on dev:
 
-* The **+7.6 accuracy points** of plain pooling are the class prior, not information from the voice: the speech model re-supplies the neutral-heavy
-  prior (text alone with the dev-frequency target reaches the same 0.596 accuracy). Macro-F1 did not improve. Without the prior correction this
-  would have looked like a fusion win.
-* With the priors handled correctly, **adding this speech model to text gives no detectable gain**: every interval includes 0. After the prior is
-  divided out the speech model alone scores 0.262 accuracy / 0.199 macro-F1, i.e. weak but above chance, and the gain over text is within noise.
-* The speech model's training prior is **inferred** from its outputs (mean probabilities, 95 % neutral predictions), not confirmed by its owner; if it
-  was trained with class weights the declaration is wrong and these rows change.
-* The conflict flag was rejected on dev (disagreement does not predict errors) and abstention at 80 % coverage worked on test (error among kept
-  0.359-0.414 vs 0.405-0.474 overall, depending on the configuration).
-* Limits: two modalities; one test set; the text side is a reproduction; the speech file's training protocol (train only) is as stated by its owner, not verified here.
+| operating point | selected on dev | accuracy | macro-F1 | vs text alone, accuracy | vs text alone, macro-F1 | vs equal-weight, accuracy | vs equal-weight, macro-F1 |
+|---|---|---|---|---|---|---|---|
+| uniform target | linear, no weighting | 0.528 | 0.393 | +0.012 [-0.003, +0.028] | +0.015 [0.000, +0.030] | -0.060 [-0.080, -0.040] | +0.049 [+0.024, +0.073] |
+| dev-frequency target | log + confidence weighting | 0.598 | 0.370 | +0.003 [-0.012, +0.020] | +0.038 [+0.022, +0.054] | +0.010 [-0.003, +0.024] | +0.026 [+0.009, +0.042] |
+
+("vs text alone" uses the text model under the same configuration; "equal-weight" is the plain average of the three models' probabilities.) With the
+priors not declared (plain pooling, reference only) the selected log + priors configuration gives 0.588 / 0.397; its implied prior is whatever the
+models happen to embed (here only speech's), so it is an uncontrolled operating point and not comparable like for like.
+
+What the evidence supports, and what it does not:
+
+* Fusion clearly beats speech alone (macro-F1 +0.19 to +0.21) and face alone (+0.22 to +0.25).
+* Over the **text model alone the gain is small**: macro-F1 +0.015 (interval touches 0) to +0.038, and **no detectable accuracy gain**. Text carries the
+  system: removing it costs 0.16 to 0.17 macro-F1.
+* **Speech and face add little, and not consistently.** Dropping speech costs macro-F1 +0.015 [+0.004, +0.027] at the uniform target but -0.003 [-0.023, +0.014]
+  at the dev-frequency target; dropping face costs +0.010 [-0.002, +0.023] and +0.023 [+0.013, +0.033]. Which one helps depends on the operating point.
+* Over the project's **equal-weight baseline** macro-F1 improves by +0.026 to +0.049; accuracy improves only at the dev-frequency target (+0.010, within noise).
+* The gains come mainly from **prior handling and calibration, not from reliability weighting**. Dev selected no weighting at the uniform target and
+  confidence weighting at the other; an exploratory look at each factor on test was mixed (none helped at the uniform target; some did at the other) and is
+  not corrected for the number of comparisons. Quality weighting was not tested: no quality scores exist.
+* **Calibration of the fused output:** `calibrate_fused` (one temperature per availability pattern) lowers test NLL / ECE from 1.584 / 0.268 to 1.343 / 0.042 at
+  the uniform target and from 1.277 / 0.087 to 1.214 / 0.072 at the other, without changing any prediction. A single temperature fitted with all modalities
+  present would have *hurt* missing-modality cases (text alone, linear: NLL 1.366 -> 1.700), which is why it is per pattern.
+* **Abstention** at 80 % target coverage (threshold from dev): error among the kept predictions 0.418 vs 0.472 overall (uniform target) and 0.355 vs 0.402.
+* The **conflict flag** was rejected on dev in every run (disagreement did not predict errors).
+* Differences between the configurations in the table are about as large as their intervals: do not read a ranking from them.
+
+Limits: one test split; the text side is a reproduction; speech's training prior is inferred; the analyses were not corrected for multiple comparisons; the
+speech and face files are as stated by their owners (trained on `train` only), not verified here.
 
 ## Evaluating real predictions
 
@@ -191,8 +207,7 @@ python -m fusion.experiments.evaluate_real --data DIR --strip-split-prefix --con
 ```
 
 (`DIR` holds `labels_dev.csv` / `labels_test.csv` and, until the text owner's file exists, a `probs_{dev,test}_text.csv`.)
-It has been run on real **text-only** outputs (reproduces the numbers above) and its mechanics are unit-tested on synthetic files; it has
-**not** been run on real multi-modal predictions because none exist yet. It cannot verify that the files really come from the stated models.
+It has been run on the real predictions above and its mechanics are unit-tested on synthetic files. It cannot verify that the files really come from the stated models.
 
 ## Configuration
 
@@ -209,7 +224,7 @@ choice with no supporting measurement, `engineering` = numerical safeguard. Noth
 | `model_priors` | `{}` | assumption | Per-modality class prior that the model's probabilities ASSUME (the prior of its training distribution): 'uniform' (default) or one positive number per label, in label order. class_weight='balanced' training -> uniform; unweighted training -> the training class frequencies. It is divided out before pooling so a prior is not counted once per model (Bayes: P(c|x_1..x_M) ~ pi_t(c) * prod_m p_m(c|x_m) / pi_m(c)). Declared by the model owner, never estimated here; a wrong declaration makes results worse, not better. Partial-support modalities must stay 'uniform'. |
 | `target_prior` | `'uniform'` | assumption | Class prior of the FUSED output, applied exactly once: 'uniform' (default: no prior imposed; suits macro-F1 / balanced accuracy), 'dev' (class frequencies of the y_dev given to fit(), Laplace-smoothed; suits accuracy) or an explicit vector. This is a real accuracy / macro-F1 trade-off, not a free gain: on the real MELD text model alone (independent reproduction, text only) moving uniform -> dev frequencies raised test accuracy 0.516 -> 0.597 and lowered test macro-F1 0.378 -> 0.347. |
 | `target_prior_power` | `1.0` | assumption | Exponent alpha in [0, 1] applied to a non-uniform target prior (pi_t ~ pi^alpha): 0 = uniform, 1 = as given. Interpolates between the two objectives (text-only check on real MELD outputs: alpha=0.5 gave test accuracy 0.582 / macro-F1 0.379 vs 0.516 / 0.378 for uniform). Choose it on dev data only. Ignored when target_prior is 'uniform'. Setting any prior option also switches calibration to the prior-aware form: only the evidence log p - log pi_m is scaled by 1/T, and T is fitted against the dev class prior. |
-| `calibrate_fused` | `False` | evidence | Fit one extra temperature on the FUSED dev output (after pooling) and apply it to every fused output. Argmax is unchanged; only confidence changes. Calibrating each model separately does not make the pooled probabilities calibrated when modality errors are correlated: in simulation with shared noise (rho=0.6) log-pooled NLL was 1.29 vs 1.09 for linear, and the fused temperature recovers most of that (see results/correlated_errors.json). One temperature is fitted on all-modalities-present dev rows, so it is only approximately right when modalities are missing at run time. Needs fit(). |
+| `calibrate_fused` | `False` | evidence | Fit one extra temperature on the FUSED dev output (after pooling), separately for each availability pattern (which modalities were used for a sample; dev data has all of them, so each pattern is fitted by pooling only that subset), and soften each fused output with the temperature of its own pattern. Argmax is unchanged; only confidence changes. Per-model calibration does not calibrate the pooled output when errors are correlated: simulated NLL 1.29 (log) vs 1.09 (linear) at rho=0.6; real MELD text+speech+face, test NLL/ECE 1.584/0.268 -> 1.343/0.042 (linear, uniform target) and 1.277/0.087 -> 1.214/0.072 (log, dev target). A single temperature fitted with all modalities present hurt missing-modality cases on real data (text alone NLL 1.366 -> 1.700), hence one per pattern. Off by default only to leave the integrated confidence unchanged; recommended when fusing 2+ modalities. Needs fit(). |
 | `pooling` | `'linear'` | assumption | 'linear' = weighted mean of probabilities (project-brief formula). 'log' = weighted product of experts. Log scored higher on SIMULATED data (+0.023 mean macro-F1, better in 8 of 9 scenarios, never worse), but that simulation assumes independent errors, which favours log by construction; choose after correlated-error and real-dev results. |
 | `use_calibration` | `True` | evidence | Temperature-scale each modality (fit on dev data only; needs fit(), an un-fitted fuser warns once and applies nothing). Switching it off cost 0.038 macro-F1 on average in the simulation (worse in 8 of 9 scenarios) -- but the simulated models are over-confident by construction, so real-data benefit is unverified. |
 | `use_priors` | `False` | evidence | Multiply weights by each modality's dev macro-F1. Simulated: -0.004 mean macro-F1 with linear pooling (worse in 5 of 9 scenarios, best case +0.003) and -0.002 with log. F1 values from different class subsets are also not directly comparable. Revisit in the prior-correction stage. |
@@ -323,8 +338,8 @@ not changed, to avoid silently altering the integrated output.
 
 ## Known gaps
 
-1. **Real predictions are incomplete.** Speech outputs exist (see "First check on real predictions"); the face owner's probability files are not
-   yet in the repository (see item 4) and neither is the text owner's. Needed: all three on the same MELD dev and test `sample_id`s, trained on `train` only.
+1. **The text predictions are a reproduction.** Speech and face files come from their owners; the text owner's own probability file is not in the repository.
+   All three models need to be confirmed as trained on `train` only, on identical sample ids. Needed: all three on the same MELD dev and test `sample_id`s, trained on `train` only.
 2. **Text model:** `text_emotion/` now trains on MELD (7 classes; reported ~51 % accuracy). I reproduced that independently
    (text only) but no prediction file from the team's own run is in the repository, so it is not verified from their artifact.
    `text_emotion/predict.py` preprocesses text while `train.py` / `evaluate.py` use raw text, and the README still quotes an old
@@ -332,10 +347,7 @@ not changed, to avoid silently altering the integrated output.
 3. **Speech model:** the exported probabilities are close to the class prior (95 % of test utterances labelled neutral, macro-F1 0.13; 0.20 after
    the prior is divided out), so it adds little to text so far. Its training prior is inferred, not confirmed. The earlier syntax error in
    `mosei_data.py` was fixed by its owner.
-4. **Face model:** open pull request #1 (`facial_emotion/`, not merged). Reviewed from its code and README only: class-balanced logistic regression on
-   mean / standard deviation of MediaPipe landmark coordinates, scaler and classifier fitted on train only, reported test accuracy 20.0 % and macro-F1 0.177
-   (1,078 of 1,109 dev and 2,548 of 2,610 test utterances have a face; the rest are missing modality). The probability files it writes
-   (`visual_{dev,test}_probabilities.csv`) are saved to the owner's local drive and are **not in the pull request**, so no face result has been checked here.
-   The model would be declared `model_priors={"face": "uniform"}` (balanced weights).
-5. **Untested with all three modalities:** the comparisons above use text + speech only. The choice between linear and log pooling,
-   `calibrate_fused`, reliability weighting under real noise, and the conflict flag with three modalities still need the face predictions.
+4. **Face model:** open pull request #1 (`facial_emotion/`, not merged); its probability files (commit `4d0367e`) were checked and used above. Weak on its own
+   (0.200 accuracy / 0.177 macro-F1; mean/std of landmark coordinates).
+5. **Not established:** whether reliability weighting helps (mixed, uncorrected comparisons); quality weighting (no quality scores); behaviour under real
+   noise or occlusion; anything beyond MELD test (CMU-MOSEI was not evaluated); robustness of the small gains over text with other splits or seeds.

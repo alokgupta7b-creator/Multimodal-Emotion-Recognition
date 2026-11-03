@@ -128,10 +128,18 @@ def report(y, P):
     return out
 
 
+WEIGHTINGS = {"": {}, "+priors": {"use_priors": True}, "+confidence": {"confidence_power": 1.0},
+              "+agreement": {"consistency_power": 1.0},
+              "+all": {"use_priors": True, "confidence_power": 1.0, "consistency_power": 1.0}}
+
+
 def candidates(base: FusionConfig) -> Dict[str, FusionConfig]:
+    """pooling x reliability weighting. Quality weighting is not a candidate: it needs quality scores nobody supplies yet.
+    ``calibrate_fused`` is not a candidate either (it never changes the argmax, so it cannot change the dev ranking); it is
+    reported separately for the selected configuration."""
     out = {}
-    for pooling, fused_t in itertools.product(("linear", "log"), (False, True)):
-        out[f"{pooling}{'+fusedT' if fused_t else ''}"] = replace(base, pooling=pooling, calibrate_fused=fused_t)
+    for pooling, (wn, kw) in itertools.product(("linear", "log"), WEIGHTINGS.items()):
+        out[f"{pooling}{wn}"] = replace(base, pooling=pooling, calibrate_fused=False, **kw)
     return out
 
 
@@ -228,6 +236,7 @@ def evaluate(data_dir: Path, config: Optional[dict] = None, seed: int = 0,
     # 3. the selected configuration: availability patterns, abstention, conflict
     cfg = cands[sel]
     f, full, _ = fit_fuse(cfg, dev_p, y_dev, te_p)
+    _, full_ft, _ = fit_fuse(replace(cfg, calibrate_fused=True), dev_p, y_dev, te_p)
     both = np.all([np.isfinite(te_p[m]).any(axis=1) for m in mods], axis=0)
     res["selected_test"] = {
         "all_test_rows": report(y_te, full.probs),
@@ -236,6 +245,7 @@ def evaluate(data_dir: Path, config: Optional[dict] = None, seed: int = 0,
             "equal_weight": report(y_te[both], eq_r.probs[both]),
             **{m: report(y_te[both], te_p[m][both]) for m in mods}})},
         "summary": full.summary(),
+        "with_fused_temperature": report(y_te, full_ft.probs),      # same predictions, probabilities re-calibrated on dev
     }
     per_subset = {}
     for r_ in range(1, len(mods) + 1):
@@ -251,6 +261,14 @@ def evaluate(data_dir: Path, config: Optional[dict] = None, seed: int = 0,
             _, rm, _ = fit_fuse(cfg, dev_p, y_dev, te_p, subset={m})
             boot[m] = paired_bootstrap(y_te, g_te, pf, rm.pred, seed=seed)
         res["selected_test"]["fused_minus_single_modality_paired_bootstrap"] = boot
+        if len(mods) > 2:                   # what does each modality add to the others?
+            loo = {}
+            for m in mods:
+                _, rm, _ = fit_fuse(cfg, dev_p, y_dev, te_p, subset=set(mods) - {m})
+                loo[f"without_{m}"] = paired_bootstrap(y_te, g_te, pf, rm.pred, seed=seed)
+            res["selected_test"]["fused_minus_leave_one_modality_out_paired_bootstrap"] = loo
+        res["selected_test"]["fused_minus_equal_weight_baseline_paired_bootstrap"] = paired_bootstrap(
+            y_te, g_te, pf, eq_r.pred, seed=seed)
     oof = out_of_fold_confidence(cfg, dev_p, y_dev, g_dev, n_folds=folds, seed=seed)
     usable = oof["pred"] >= 0
     ab = {}
@@ -289,6 +307,14 @@ def _print(res: dict) -> None:
         a_, f_ = b["accuracy"], b["macro_f1"]
         print(f"fused minus {m} alone (same config, dialogue bootstrap): accuracy {a_['mean']:+.3f} [{a_['lo95']:+.3f}, {a_['hi95']:+.3f}], "
               f"macro-F1 {f_['mean']:+.3f} [{f_['lo95']:+.3f}, {f_['hi95']:+.3f}]")
+    show = lambda b: (f"accuracy {b['accuracy']['mean']:+.3f} [{b['accuracy']['lo95']:+.3f}, {b['accuracy']['hi95']:+.3f}], "
+                      f"macro-F1 {b['macro_f1']['mean']:+.3f} [{b['macro_f1']['lo95']:+.3f}, {b['macro_f1']['hi95']:+.3f}]")
+    for k, b in res["selected_test"].get("fused_minus_leave_one_modality_out_paired_bootstrap", {}).items():
+        print(f"fused minus fused {k.replace('_', ' ')}: {show(b)}")
+    if "fused_minus_equal_weight_baseline_paired_bootstrap" in res["selected_test"]:
+        print(f"fused minus equal-weight baseline: {show(res['selected_test']['fused_minus_equal_weight_baseline_paired_bootstrap'])}")
+    ft = res["selected_test"]["with_fused_temperature"]
+    print(f"probabilities with calibrate_fused=True (same predictions): NLL {ft.get('nll', float('nan')):.3f}, ECE {ft.get('ece', float('nan')):.3f}")
     ab = res["selected_test"]["abstention"]
     if ab:
         print(f"\nabstention (threshold {ab['threshold_from_dev_oof']:.3f} from dev out-of-fold, target coverage 0.8): test coverage "

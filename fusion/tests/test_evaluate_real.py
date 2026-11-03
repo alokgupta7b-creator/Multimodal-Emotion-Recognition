@@ -195,3 +195,28 @@ def test_bootstrap_resamples_whole_dialogues():
     b = np.zeros(8, dtype=int)
     r = ev.paired_bootstrap(y, g, a, b, n_boot=300)
     assert r["accuracy"]["lo95"] <= -0.5 and r["accuracy"]["hi95"] <= 0   # whole-dialogue resamples only give 0 or -0.5 or -1
+
+
+def test_candidates_are_pooling_times_weighting_and_selection_is_among_them(data):
+    res = ev.evaluate(data)
+    names = set(res["candidates"]["dev_out_of_fold_macro_f1"])
+    assert names == {p + w for p in ("linear", "log") for w in ("", "+priors", "+confidence", "+agreement", "+all")}
+    assert res["candidates"]["selected_on_dev"] in names
+    cfg_sel = res["candidates"]["selected_on_dev"]
+    assert res["candidates"]["test"][cfg_sel]["n"] == 900
+    # calibrate_fused is reported for the selected configuration only, with identical predictions
+    ft, sel = res["selected_test"]["with_fused_temperature"], res["selected_test"]["all_test_rows"]
+    assert ft["confusion_matrix"] == sel["confusion_matrix"] and "nll" in ft
+
+
+def test_three_modalities_give_leave_one_out_and_equal_weight_comparisons(tmp_path):
+    _write_split(tmp_path, "dev", 600, 1, mods=("text", "audio", "face"))
+    _write_split(tmp_path, "test", 900, 2, mods=("text", "audio", "face"))
+    res = ev.evaluate(tmp_path)
+    st = res["selected_test"]
+    assert set(st["fused_minus_leave_one_modality_out_paired_bootstrap"]) == {"without_text", "without_audio", "without_face"}
+    assert set(st["modality_subsets_used_at_test"]) == {"text", "audio", "face", "text+audio", "text+face", "audio+face", "text+audio+face"}
+    for b in st["fused_minus_leave_one_modality_out_paired_bootstrap"].values():
+        assert b["macro_f1"]["lo95"] < b["macro_f1"]["hi95"]
+    eqb = st["fused_minus_equal_weight_baseline_paired_bootstrap"]
+    assert set(eqb) == {"accuracy", "macro_f1", "n_boot"}
