@@ -276,6 +276,7 @@ class ReliabilityAwareFuser:
         tp = config.target_prior
         self._prior_aware_cal = self._has_model_prior or not (isinstance(tp, str) and tp == "uniform")
         self._dev_prior: Optional[np.ndarray] = None      # set by fit(); used by target_prior="dev"
+        self.fused_temperature = 1.0                      # set by fit() when calibrate_fused is on
 
     # ------------------------------------------------------------ class priors
     def _target_log_prior(self) -> Optional[np.ndarray]:
@@ -393,11 +394,37 @@ class ReliabilityAwareFuser:
             mean = float(np.mean(list(f1s.values())))
             for name, f in f1s.items():
                 priors[name] = f / mean
+        old = (self._dev_prior, self.temperatures, self.priors, self.fit_report, self.fitted, self.fused_temperature)
         self._dev_prior = dev_prior
         self.temperatures, self.priors = temps, priors
         self.fit_report = report
         self.fitted = True
+        self.fused_temperature = 1.0
+        if cfg.calibrate_fused:
+            try:
+                self.fused_temperature = self._fit_fused_temperature(dev_probs, y)
+            except Exception:                              # a failed fit leaves the fuser as it was
+                (self._dev_prior, self.temperatures, self.priors, self.fit_report, self.fitted,
+                 self.fused_temperature) = old
+                raise
         return self
+
+    def _fit_fused_temperature(self, dev_probs, y) -> float:
+        """Temperature of the pooled output on the dev rows where at least one modality is usable."""
+        got = {m: p for m, p in dev_probs.items() if p is not None}
+        with _warnings.catch_warnings():
+            _warnings.simplefilter("ignore")
+            r = self.fuse_batch(got)
+        use = (r.pred >= 0) & np.isfinite(r.probs).all(axis=1)
+        if int(use.sum()) < self.config.min_fit_samples:
+            _warnings.warn(f"calibrate_fused: only {int(use.sum())} usable dev rows (< min_fit_samples="
+                           f"{self.config.min_fit_samples}); fused temperature stays at 1.0", UserWarning, stacklevel=3)
+            return 1.0
+        T = fit_temperature(r.probs[use], y[use])
+        if temperature_at_bound(T):
+            _warnings.warn(f"calibrate_fused: fitted temperature {T:.3g} is at the search bound; not trustworthy",
+                           UserWarning, stacklevel=3)
+        return float(T)
 
     # ------------------------------------------------------------ batch core
     def fuse_batch(
@@ -561,6 +588,11 @@ class ReliabilityAwareFuser:
 
         none = n_avail == 0
         fused[none] = np.nan            # no modality, no prediction: do not invent a distribution
+        if cfg.calibrate_fused and self.fused_temperature != 1.0:
+            lg = np.log(np.clip(fused, _EPS, 1.0)) / self.fused_temperature        # NaN stays NaN (unsupported / none)
+            lg = lg - np.nanmax(np.where(np.isnan(lg), -np.inf, lg), axis=1, keepdims=True).clip(min=-1e300)
+            e = np.exp(lg)
+            fused = e / np.nansum(e, axis=1, keepdims=True)
         partial_only = partial_only & ~none
 
         # ---- conflict -----------------------------------------------------------------------

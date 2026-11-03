@@ -297,3 +297,55 @@ class TestPriorAwareCalibration:
         assert abs(f.temperatures["text"] - 1.0) < 0.06
         out = f.fuse_batch({"text": P[:50]}).probs
         np.testing.assert_allclose(out, P[:50], atol=0.03)               # T ~ 1, same prior in and out
+
+
+class TestFusedTemperature:
+    @staticmethod
+    def _corr(n=6000, seed=0, rho=0.8):
+        rng = np.random.default_rng(seed)
+        y = rng.integers(0, K, n)
+        shared = rng.normal(size=(n, K))
+        P = {}
+        for m in MODS:
+            L = 2.0 * np.eye(K)[y] + np.sqrt(1 - rho) * rng.normal(size=(n, K)) + np.sqrt(rho) * shared
+            e = np.exp(2.0 * L - (2.0 * L).max(1, keepdims=True))
+            P[m] = e / e.sum(1, keepdims=True)
+        return P, y
+
+    def test_off_by_default_and_identity_when_off(self):
+        P, y = self._corr()
+        a = ReliabilityAwareFuser(FusionConfig(pooling="log")).fit(P, y)
+        assert a.fused_temperature == 1.0
+        b = ReliabilityAwareFuser(FusionConfig(pooling="log", calibrate_fused=False)).fit(P, y)
+        np.testing.assert_array_equal(a.fuse_batch(P).probs, b.fuse_batch(P).probs)
+
+    def test_argmax_unchanged_and_overconfident_log_pooling_is_softened(self):
+        from fusion.calibration import nll
+        P, y = self._corr()
+        base = ReliabilityAwareFuser(FusionConfig(pooling="log")).fit(P, y)
+        cal = ReliabilityAwareFuser(FusionConfig(pooling="log", calibrate_fused=True)).fit(P, y)
+        rb, rc = base.fuse_batch(P), cal.fuse_batch(P)
+        np.testing.assert_array_equal(rb.pred, rc.pred)
+        assert cal.fused_temperature > 1.2                        # correlated errors: product of experts is over-confident
+        assert nll(rc.probs, y) < nll(rb.probs, y) - 0.05
+        np.testing.assert_allclose(rc.probs.sum(1), 1.0, atol=1e-10)
+
+    def test_nan_rows_survive_and_single_matches_batch(self):
+        P, y = self._corr(n=3000)
+        f = ReliabilityAwareFuser(FusionConfig(pooling="log", calibrate_fused=True)).fit(P, y)
+        Q = {m: p[:5].copy() for m, p in P.items()}
+        for p in Q.values():
+            p[0] = np.nan                                         # nothing usable for sample 0
+        r = f.fuse_batch(Q)
+        assert np.isnan(r.probs[0]).all() and r.pred[0] == -1
+        assert np.isfinite(r.probs[1:]).all()
+        one = f.fuse({m: P[m][3] for m in MODS})
+        np.testing.assert_allclose(one.probs, f.fuse_batch({m: P[m][3:4] for m in MODS}).probs[0], atol=1e-12)
+
+    def test_failed_fit_leaves_fuser_unchanged(self):
+        P, y = self._corr(n=3000)
+        f = ReliabilityAwareFuser(FusionConfig(pooling="log", calibrate_fused=True)).fit(P, y)
+        T, temps = f.fused_temperature, dict(f.temperatures)
+        with pytest.raises(FusionInputError):
+            f.fit({"text": P["text"][:10]}, y)                    # row mismatch
+        assert f.fused_temperature == T and f.temperatures == temps

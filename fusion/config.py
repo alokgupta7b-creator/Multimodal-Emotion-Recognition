@@ -63,6 +63,14 @@ class FusionConfig:
         "gave test accuracy 0.582 / macro-F1 0.379 vs 0.516 / 0.378 for uniform). Choose it on dev data "
         "only. Ignored when target_prior is 'uniform'. Setting any prior option also switches calibration to the prior-aware form: "
         "only the evidence log p - log pi_m is scaled by 1/T, and T is fitted against the dev class prior.")
+    calibrate_fused: bool = _f(
+        False, "evidence",
+        "Fit one extra temperature on the FUSED dev output (after pooling) and apply it to every fused output. "
+        "Argmax is unchanged; only confidence changes. Calibrating each model separately does not make the pooled "
+        "probabilities calibrated when modality errors are correlated: in simulation with shared noise (rho=0.6) "
+        "log-pooled NLL was 1.29 vs 1.09 for linear, and the fused temperature recovers most of that "
+        "(see results/correlated_errors.json). One temperature is fitted on all-modalities-present dev rows, so it "
+        "is only approximately right when modalities are missing at run time. Needs fit().")
     pooling: str = _f(
         "linear", "assumption",
         "'linear' = weighted mean of probabilities (project-brief formula). 'log' = weighted product "

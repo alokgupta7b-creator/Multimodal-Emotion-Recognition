@@ -1,0 +1,395 @@
+{
+  "_note": "SIMULATED. Balanced classes, calibration fitted on a dev draw of the same process, mean over 5 seeds. Not real-data performance.",
+  "independent errors (rho=0)": {
+    "all modalities": {
+      "equal weight, uncalibrated": {
+        "macro_f1": 0.7791,
+        "acc": 0.7792,
+        "nll": 0.9269
+      },
+      "linear": {
+        "macro_f1": 0.8114,
+        "acc": 0.8114,
+        "nll": 0.9781
+      },
+      "log": {
+        "macro_f1": 0.8395,
+        "acc": 0.8396,
+        "nll": 0.4663
+      },
+      "linear+fusedT": {
+        "macro_f1": 0.8114,
+        "acc": 0.8114,
+        "nll": 0.5628
+      },
+      "log+fusedT": {
+        "macro_f1": 0.8395,
+        "acc": 0.8396,
+        "nll": 0.4662
+      }
+    }
+  },
+  "shared noise rho=0.3": {
+    "all modalities": {
+      "equal weight, uncalibrated": {
+        "macro_f1": 0.6862,
+        "acc": 0.6863,
+        "nll": 0.9953
+      },
+      "linear": {
+        "macro_f1": 0.7172,
+        "acc": 0.7173,
+        "nll": 1.031
+      },
+      "log": {
+        "macro_f1": 0.7205,
+        "acc": 0.7206,
+        "nll": 0.8656
+      },
+      "linear+fusedT": {
+        "macro_f1": 0.7172,
+        "acc": 0.7173,
+        "nll": 0.8239
+      },
+      "log+fusedT": {
+        "macro_f1": 0.7205,
+        "acc": 0.7206,
+        "nll": 0.7918
+      }
+    }
+  },
+  "shared noise rho=0.6": {
+    "all modalities": {
+      "equal weight, uncalibrated": {
+        "macro_f1": 0.6176,
+        "acc": 0.6177,
+        "nll": 1.0776
+      },
+      "linear": {
+        "macro_f1": 0.6457,
+        "acc": 0.6459,
+        "nll": 1.0929
+      },
+      "log": {
+        "macro_f1": 0.6369,
+        "acc": 0.6371,
+        "nll": 1.2864
+      },
+      "linear+fusedT": {
+        "macro_f1": 0.6457,
+        "acc": 0.6459,
+        "nll": 1.0142
+      },
+      "log+fusedT": {
+        "macro_f1": 0.6369,
+        "acc": 0.6371,
+        "nll": 1.0142
+      }
+    }
+  },
+  "shared noise rho=0.9": {
+    "all modalities": {
+      "equal weight, uncalibrated": {
+        "macro_f1": 0.5598,
+        "acc": 0.56,
+        "nll": 1.1841
+      },
+      "linear": {
+        "macro_f1": 0.5891,
+        "acc": 0.5893,
+        "nll": 1.1705
+      },
+      "log": {
+        "macro_f1": 0.5773,
+        "acc": 0.5775,
+        "nll": 1.7033
+      },
+      "linear+fusedT": {
+        "macro_f1": 0.5891,
+        "acc": 0.5893,
+        "nll": 1.1568
+      },
+      "log+fusedT": {
+        "macro_f1": 0.5773,
+        "acc": 0.5775,
+        "nll": 1.1695
+      }
+    }
+  },
+  "shared confuser, 20% of samples": {
+    "all modalities": {
+      "equal weight, uncalibrated": {
+        "macro_f1": 0.5614,
+        "acc": 0.5615,
+        "nll": 1.2888
+      },
+      "linear": {
+        "macro_f1": 0.5917,
+        "acc": 0.5918,
+        "nll": 1.3231
+      },
+      "log": {
+        "macro_f1": 0.5894,
+        "acc": 0.5895,
+        "nll": 1.5165
+      },
+      "linear+fusedT": {
+        "macro_f1": 0.5917,
+        "acc": 0.5918,
+        "nll": 1.244
+      },
+      "log+fusedT": {
+        "macro_f1": 0.5894,
+        "acc": 0.5895,
+        "nll": 1.253
+      }
+    }
+  },
+  "shared confuser, 40% of samples": {
+    "all modalities": {
+      "equal weight, uncalibrated": {
+        "macro_f1": 0.4387,
+        "acc": 0.4388,
+        "nll": 1.5769
+      },
+      "linear": {
+        "macro_f1": 0.4665,
+        "acc": 0.4667,
+        "nll": 1.5019
+      },
+      "log": {
+        "macro_f1": 0.4609,
+        "acc": 0.461,
+        "nll": 1.8316
+      },
+      "linear+fusedT": {
+        "macro_f1": 0.4665,
+        "acc": 0.4667,
+        "nll": 1.4644
+      },
+      "log+fusedT": {
+        "macro_f1": 0.4609,
+        "acc": 0.461,
+        "nll": 1.477
+      }
+    }
+  },
+  "degradation rho=0.6": {
+    "audio x1.0": {
+      "equal weight, uncalibrated": {
+        "macro_f1": 0.6176,
+        "acc": 0.6177,
+        "nll": 1.0776
+      },
+      "linear": {
+        "macro_f1": 0.6457,
+        "acc": 0.6459,
+        "nll": 1.0929
+      },
+      "log": {
+        "macro_f1": 0.6369,
+        "acc": 0.6371,
+        "nll": 1.2864
+      },
+      "linear+fusedT": {
+        "macro_f1": 0.6457,
+        "acc": 0.6459,
+        "nll": 1.0142
+      },
+      "log+fusedT": {
+        "macro_f1": 0.6369,
+        "acc": 0.6371,
+        "nll": 1.0142
+      }
+    },
+    "audio x0.5": {
+      "equal weight, uncalibrated": {
+        "macro_f1": 0.5203,
+        "acc": 0.5204,
+        "nll": 1.2622
+      },
+      "linear": {
+        "macro_f1": 0.5769,
+        "acc": 0.5771,
+        "nll": 1.2398
+      },
+      "log": {
+        "macro_f1": 0.5559,
+        "acc": 0.556,
+        "nll": 1.6617
+      },
+      "linear+fusedT": {
+        "macro_f1": 0.5769,
+        "acc": 0.5771,
+        "nll": 1.2103
+      },
+      "log+fusedT": {
+        "macro_f1": 0.5559,
+        "acc": 0.556,
+        "nll": 1.2332
+      }
+    },
+    "audio x0.2": {
+      "equal weight, uncalibrated": {
+        "macro_f1": 0.4754,
+        "acc": 0.4755,
+        "nll": 1.3501
+      },
+      "linear": {
+        "macro_f1": 0.5451,
+        "acc": 0.5453,
+        "nll": 1.3127
+      },
+      "log": {
+        "macro_f1": 0.5071,
+        "acc": 0.5072,
+        "nll": 1.9167
+      },
+      "linear+fusedT": {
+        "macro_f1": 0.5451,
+        "acc": 0.5453,
+        "nll": 1.308
+      },
+      "log+fusedT": {
+        "macro_f1": 0.5071,
+        "acc": 0.5072,
+        "nll": 1.3767
+      }
+    },
+    "audio x0.0": {
+      "equal weight, uncalibrated": {
+        "macro_f1": 0.4516,
+        "acc": 0.4517,
+        "nll": 1.3958
+      },
+      "linear": {
+        "macro_f1": 0.5283,
+        "acc": 0.5284,
+        "nll": 1.353
+      },
+      "log": {
+        "macro_f1": 0.4752,
+        "acc": 0.4753,
+        "nll": 2.0978
+      },
+      "linear+fusedT": {
+        "macro_f1": 0.5283,
+        "acc": 0.5284,
+        "nll": 1.3621
+      },
+      "log+fusedT": {
+        "macro_f1": 0.4752,
+        "acc": 0.4753,
+        "nll": 1.4767
+      }
+    },
+    "face x1.0": {
+      "equal weight, uncalibrated": {
+        "macro_f1": 0.6176,
+        "acc": 0.6177,
+        "nll": 1.0776
+      },
+      "linear": {
+        "macro_f1": 0.6457,
+        "acc": 0.6459,
+        "nll": 1.0929
+      },
+      "log": {
+        "macro_f1": 0.6369,
+        "acc": 0.6371,
+        "nll": 1.2864
+      },
+      "linear+fusedT": {
+        "macro_f1": 0.6457,
+        "acc": 0.6459,
+        "nll": 1.0142
+      },
+      "log+fusedT": {
+        "macro_f1": 0.6369,
+        "acc": 0.6371,
+        "nll": 1.0142
+      }
+    },
+    "face x0.5": {
+      "equal weight, uncalibrated": {
+        "macro_f1": 0.559,
+        "acc": 0.5591,
+        "nll": 1.2098
+      },
+      "linear": {
+        "macro_f1": 0.6009,
+        "acc": 0.601,
+        "nll": 1.1956
+      },
+      "log": {
+        "macro_f1": 0.5784,
+        "acc": 0.5786,
+        "nll": 1.5534
+      },
+      "linear+fusedT": {
+        "macro_f1": 0.6009,
+        "acc": 0.601,
+        "nll": 1.1482
+      },
+      "log+fusedT": {
+        "macro_f1": 0.5784,
+        "acc": 0.5786,
+        "nll": 1.171
+      }
+    },
+    "face x0.2": {
+      "equal weight, uncalibrated": {
+        "macro_f1": 0.5314,
+        "acc": 0.5315,
+        "nll": 1.2731
+      },
+      "linear": {
+        "macro_f1": 0.5793,
+        "acc": 0.5795,
+        "nll": 1.2472
+      },
+      "log": {
+        "macro_f1": 0.5423,
+        "acc": 0.5424,
+        "nll": 1.7297
+      },
+      "linear+fusedT": {
+        "macro_f1": 0.5793,
+        "acc": 0.5795,
+        "nll": 1.2158
+      },
+      "log+fusedT": {
+        "macro_f1": 0.5423,
+        "acc": 0.5424,
+        "nll": 1.2717
+      }
+    },
+    "face x0.0": {
+      "equal weight, uncalibrated": {
+        "macro_f1": 0.517,
+        "acc": 0.5171,
+        "nll": 1.3076
+      },
+      "linear": {
+        "macro_f1": 0.568,
+        "acc": 0.5681,
+        "nll": 1.2768
+      },
+      "log": {
+        "macro_f1": 0.5181,
+        "acc": 0.5183,
+        "nll": 1.8534
+      },
+      "linear+fusedT": {
+        "macro_f1": 0.568,
+        "acc": 0.5681,
+        "nll": 1.2547
+      },
+      "log+fusedT": {
+        "macro_f1": 0.5181,
+        "acc": 0.5183,
+        "nll": 1.3413
+      }
+    }
+  }
+}
