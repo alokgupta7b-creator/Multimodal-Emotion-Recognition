@@ -28,6 +28,8 @@ class (e.g. the text model, which has no ``neutral``/``disgust``).
 """
 from __future__ import annotations
 
+import json as _json
+import math as _math
 import warnings as _warnings
 from collections import Counter
 from dataclasses import dataclass, field, replace
@@ -311,6 +313,75 @@ class ReliabilityAwareFuser:
         if cfg is not None and hasattr(cfg, name):
             return getattr(cfg, name)
         raise AttributeError(name)
+
+    # ------------------------------------------------------------ save / load
+    _STATE_VERSION = 1
+
+    def state_dict(self) -> dict:
+        """JSON-serialisable fitted state: configuration, temperatures, modality priors, fused temperature,
+        dev class prior and the fit report. ``from_state`` rebuilds a fuser that gives identical outputs without
+        the dev predictions (which are only needed to fit)."""
+        return {
+            "version": self._STATE_VERSION,
+            "config": self.config.to_dict(),
+            "fitted": bool(self.fitted),
+            "temperatures": {m: float(t) for m, t in self.temperatures.items()},
+            "priors": {m: float(p) for m, p in self.priors.items()},
+            "fused_temperature": float(self.fused_temperature),
+            "dev_prior": None if self._dev_prior is None else [float(x) for x in self._dev_prior],
+            "fit_report": _json.loads(_json.dumps(self.fit_report, default=float)),
+        }
+
+    @classmethod
+    def from_state(cls, state: Mapping) -> "ReliabilityAwareFuser":
+        """Inverse of ``state_dict``. Raises ``FusionInputError`` on a malformed or inconsistent state."""
+        if not isinstance(state, Mapping):
+            raise FusionInputError("state must be a dict produced by state_dict()")
+        missing = {"version", "config", "fitted", "temperatures", "priors", "fused_temperature", "dev_prior"} - set(state)
+        if missing:
+            raise FusionInputError(f"state is missing keys {sorted(missing)}")
+        if state["version"] != cls._STATE_VERSION:
+            raise FusionInputError(f"unsupported state version {state['version']!r} (this code reads {cls._STATE_VERSION})")
+        f = cls(FusionConfig.from_dict(state["config"]))
+        K, mods = len(f.config.labels), list(f.config.modalities)
+
+        def positive(name, v):
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not _math.isfinite(v) or v <= 0:
+                raise FusionInputError(f"state {name} must be a finite number > 0, got {v!r}")
+            return float(v)
+
+        for key in ("temperatures", "priors"):
+            if set(state[key]) != set(mods):
+                raise FusionInputError(f"state {key} must name exactly the modalities {mods}, got {sorted(state[key])}")
+        temps = {m: positive(f"temperatures[{m!r}]", state["temperatures"][m]) for m in mods}
+        pri = {m: positive(f"priors[{m!r}]", state["priors"][m]) for m in mods}
+        ft = positive("fused_temperature", state["fused_temperature"])
+        dp = state["dev_prior"]
+        if dp is not None:
+            if len(dp) != K:
+                raise FusionInputError(f"state dev_prior needs {K} values, got {len(dp)}")
+            dp = np.array([positive("dev_prior value", v) for v in dp])
+            if abs(dp.sum() - 1.0) > 1e-6:
+                raise FusionInputError("state dev_prior must sum to 1")
+        f.temperatures, f.priors, f.fused_temperature, f._dev_prior = temps, pri, ft, dp
+        f.fit_report = dict(state.get("fit_report") or {})
+        f.fitted = bool(state["fitted"])
+        return f
+
+    def save(self, path) -> None:
+        """Write ``state_dict()`` as JSON."""
+        with open(path, "w", encoding="utf-8") as fh:
+            _json.dump(self.state_dict(), fh, indent=2)
+
+    @classmethod
+    def load(cls, path) -> "ReliabilityAwareFuser":
+        """Read a fuser written by ``save``."""
+        try:
+            with open(path, encoding="utf-8") as fh:
+                state = _json.load(fh)
+        except _json.JSONDecodeError as e:
+            raise FusionInputError(f"{path}: not valid JSON ({e})") from None
+        return cls.from_state(state)
 
     @property
     def method(self) -> str:

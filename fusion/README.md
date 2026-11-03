@@ -47,6 +47,9 @@ Contract:
   count, non-numeric quality, misaligned or invalid labels in `fit()`. Invalid options raise `FusionConfigError`.
 * **No invented probabilities.** A sample with no usable modality has `label=None` and all-NaN `probs`. For
   a modality with partial class support, columns outside its support are NaN (never 0) and are ignored.
+* **Save / load.** `fuser.save("fuser.json")` writes the fitted state (config, temperatures, modality priors, fused temperature, dev class prior, fit
+  report; no dev predictions) and `ReliabilityAwareFuser.load("fuser.json")` restores a fuser that gives identical outputs, so integration does
+  not need the dev predictions. A malformed file raises `FusionInputError`. `state_dict()` / `from_state()` are the in-memory versions.
 * `equal_weight_fusion(inputs)` is the reference baseline; `FusionConfig.equal_weight_baseline()` is its configuration.
 * Adapters: `from_ser_prediction(SERPrediction)`; `meld_text_probs_from_model(model, texts)` for the MELD-trained text model
   (reorders by class name, raises if any of the 7 classes is missing, never fills one in). `from_text_probs` and
