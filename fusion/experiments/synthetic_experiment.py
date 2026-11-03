@@ -24,7 +24,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from fusion import (  # noqa: E402
-    MELD_LABELS, ReliabilityAwareFuser, accuracy, expected_calibration_error, macro_f1,
+    MELD_LABELS, FusionConfig, ReliabilityAwareFuser, accuracy, expected_calibration_error, macro_f1,
 )
 
 K = len(MELD_LABELS)
@@ -147,8 +147,8 @@ def run_fuser(f, data):
 
 
 def make_fuser(cfg, dev):
-    f = ReliabilityAwareFuser(**cfg)
-    return f.fit(dev["probs"], dev["y"]) if cfg.get("use_calibration", True) or cfg.get("use_priors", True) else f
+    f = ReliabilityAwareFuser(**cfg)      # unspecified options take the documented FusionConfig defaults
+    return f.fit(dev["probs"], dev["y"]) if (f.config.use_calibration or f.config.use_priors) else f
 
 
 BASELINE_CFG = dict(use_priors=False, use_calibration=False, confidence_power=0,
@@ -265,10 +265,12 @@ def run_once(seed, n_dev, n_test, verbose):
 
 
 def main(n_dev=3000, n_test=6000, n_seeds=5):
-    f1_runs = []
+    print("*** SIMULATED model outputs: this checks fusion mechanics, it is NOT real-dataset performance ***\n")
+    f1_runs, tuned = [], []
     for seed in range(n_seeds):
         f1, best = run_once(seed, n_dev, n_test, verbose=(seed == 0))
         f1_runs.append(f1)
+        tuned.append(best)
 
     print(f"\n\n=== Macro-F1 mean +- sd over {n_seeds} independent dev/test draws ===")
     cols = MAIN
@@ -293,6 +295,9 @@ def main(n_dev=3000, n_test=6000, n_seeds=5):
         json.dump({
             "note": "SIMULATED model outputs -- validates fusion mechanics only, not real-dataset accuracy.",
             "n_dev": n_dev, "n_test": n_test, "n_seeds": n_seeds,
+            "default_config": FusionConfig().to_dict(),
+            "equal_weight_baseline_config": FusionConfig.equal_weight_baseline().to_dict(),
+            "tuned_on_dev_stress_per_seed": tuned,
             "macro_f1_mean_sd": {f"{s}|{c}": v for (s, c), v in summary.items()},
         }, fh, indent=2)
     print(f"\nSaved {out / 'synthetic_results.json'}")

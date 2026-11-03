@@ -2,45 +2,55 @@
 
 Public API
 ----------
-``equal_weight_fusion(inputs)``           reference baseline (plain average)
-``ReliabilityAwareFuser``                 calibrated, reliability-weighted fusion
-    ``.fit(dev_probs, y_dev)``            fit temperatures + modality priors on a DEV split
+``FusionConfig``                          every tunable option, with documented defaults
+``ReliabilityAwareFuser(config)``         calibrated, reliability-weighted fusion
+    ``.fit(dev_probs, y_dev)``            fit temperatures (+ modality priors) on a DEV split
     ``.fuse(inputs)``                     one sample  -> ``FusionResult``
-    ``.fuse_batch(probs, quality)``       many samples -> ``BatchResult`` (vectorised)
+    ``.fuse_batch(probs, quality)``       many samples -> ``BatchResult``
+``equal_weight_fusion(inputs)``           reference baseline (plain average)
+
+``fuse`` is a thin wrapper around ``fuse_batch``: there is ONE validation and
+fusion code path, so single-sample and batch results cannot disagree.
 
 Input for one sample is a mapping ``{"text": ..., "audio": ..., "face": ...}``
-where each value is a probability vector over ``labels`` (list/array),
-a ``ModalityInput`` (adds an optional ``quality`` in [0, 1]), or ``None``
-when that modality is unavailable. Omitted modalities count as unavailable.
+where each value is a probability vector over ``labels`` (list/array), a
+``ModalityInput`` (adds an optional ``quality`` in [0, 1]), or ``None`` when the
+modality is unavailable. Omitted modalities count as unavailable.
 
-Reliability weight of modality ``m`` on one sample::
+Weight of modality ``m`` on one sample (every factor is optional; the default
+configuration uses none of them, i.e. calibrated equal weights)::
 
     w_m = prior_m * conf_m**gamma * quality_m**beta * consistency_m**lambda
 
-* ``prior_m``       dev-set macro-F1 of the modality (how good it is in general)
-* ``conf_m``        1 - normalised entropy of its *calibrated* prediction
-* ``quality_m``     external signal in [0, 1] (audio SNR score, face-detected
-                    ratio, ...); 1.0 when unknown
-* ``consistency_m`` 1 - mean Jensen-Shannon divergence to the other available
-                    modalities (agreement with the rest)
-
-Each factor can be switched off by setting its exponent to 0. Weights are
-renormalised over the *available* modalities only, so a missing modality is
-never treated as a "neutral" vote.
+See ``fusion/config.py`` for the meaning and evidence behind each default and
+``fusion/DESIGN_partial_support.md`` for modalities that cannot predict every
+class (e.g. the text model, which has no ``neutral``/``disgust``).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import warnings as _warnings
+from collections import Counter
+from dataclasses import dataclass, field, replace
 from typing import Dict, List, Mapping, Optional, Sequence, Union
 
 import numpy as np
 
-from .calibration import apply_temperature, fit_temperature
+from .calibration import (
+    T_MAX, T_MIN, apply_temperature, apply_temperature_masked, fit_temperature, temperature_at_bound,
+)
+from .config import FusionConfig
+from .errors import FusionConfigError, FusionInputError
 from .labels import MELD_LABELS, MODALITIES
 from .metrics import macro_f1
-from .validation import USABLE, validate_prob_rows, validate_quality
+from .validation import (
+    INVALID, MISSING, Q_CLIPPED, Q_INVALID, RENORMALIZED, USABLE,
+    validate_prob_rows, validate_quality_array,
+)
 
 _EPS = 1e-12
+# Two modalities whose probability mass on the classes both can predict is below this have no
+# measurable disagreement: the conditional distribution would be a ratio of numerical noise.
+_MIN_SHARED_MASS = 1e-6
 
 
 # --------------------------------------------------------------------------- #
@@ -63,51 +73,67 @@ class FusionResult:
 
     label: Optional[str]            # None when no usable modality existed
     label_index: int                # -1 when label is None
-    probs: np.ndarray               # fused distribution over labels
+    probs: np.ndarray               # fused distribution; NaN = class not scored (see partial_only),
+                                    # or every entry NaN when there is no prediction (none invented)
     confidence: float               # max fused probability (0.0 if no prediction)
     margin: float                   # top-1 minus top-2 fused probability
     available: List[str]            # modalities that contributed
     missing: List[str]              # modalities absent or dropped as invalid
-    weights: Dict[str, float]       # normalised weights (sum to 1 over available)
-    conflict_score: float           # mean pairwise JSD in [0, 1] among available
-    conflict: bool                  # modalities disagree (see conflict_threshold)
-    uncertain: bool                 # conflict, or confidence < min_confidence
+    weights: Dict[str, float]       # normalised weights over the available modalities
+    conflict_score: float           # mean pairwise JSD (bits, in [0, 1]) among available
+    conflict: bool                  # modalities disagree (see FusionConfig.conflict_threshold)
+    uncertain: bool                 # conflict, no prediction, or confidence < min_confidence
     method: str
     warnings: List[str] = field(default_factory=list)
+    status: Dict[str, str] = field(default_factory=dict)          # per-modality validation status
+    quality_status: Dict[str, str] = field(default_factory=dict)  # per-modality quality status
+    partial_only: bool = False      # only partial-class-support modalities were available
 
     def to_dict(self) -> dict:
         d = dict(self.__dict__)
-        d["probs"] = [float(x) for x in self.probs]
+        d["probs"] = [None if not np.isfinite(x) else float(x) for x in self.probs]
         return d
 
 
 @dataclass
 class BatchResult:
-    probs: np.ndarray               # (N, K)
+    probs: np.ndarray               # (N, K); NaN = class not scored (partial_only rows) or no prediction
     pred: np.ndarray                # (N,) int, -1 = no prediction
     confidence: np.ndarray          # (N,)
-    weights: np.ndarray             # (M, N) normalised
+    weights: np.ndarray             # (M, N) normalised over available modalities
     available: np.ndarray           # (M, N) bool
     conflict_score: np.ndarray      # (N,)
     conflict: np.ndarray            # (N,) bool
     uncertain: np.ndarray           # (N,) bool
     modalities: tuple
+    status: np.ndarray = None           # (M, N) object: validation status per modality/sample
+    quality_status: np.ndarray = None   # (M, N) object: ok / unknown / invalid / clipped
+    partial_only: np.ndarray = None     # (N,) bool
+    labels: tuple = ()
+
+    def summary(self) -> dict:
+        """Counts a reader can check: why modalities were dropped, how many rows had no prediction."""
+        per_mod = {m: dict(Counter(self.status[i].tolist())) for i, m in enumerate(self.modalities)}
+        q = {m: {k: v for k, v in Counter(self.quality_status[i].tolist()).items() if k in (Q_CLIPPED, Q_INVALID)}
+             for i, m in enumerate(self.modalities)}
+        return {
+            "n": int(len(self.pred)),
+            "status": per_mod,
+            "quality_issues": {m: c for m, c in q.items() if c},
+            "no_prediction": int((self.pred == -1).sum()),
+            "partial_only": int(self.partial_only.sum()),
+            "conflict": int(self.conflict.sum()),
+            "uncertain": int(self.uncertain.sum()),
+        }
 
 
 # --------------------------------------------------------------------------- #
-# Helpers
+# Numerical helpers
 # --------------------------------------------------------------------------- #
-def _coerce(x: InputLike) -> ModalityInput:
-    if isinstance(x, ModalityInput):
-        return x
-    return ModalityInput(probs=x)
-
-
-def _entropy_norm(P: np.ndarray) -> np.ndarray:
-    """Normalised Shannon entropy in [0, 1] along the last axis."""
-    K = P.shape[-1]
+def _entropy_norm(P: np.ndarray, k: int) -> np.ndarray:
+    """Shannon entropy normalised by log(k), in [0, 1], along the last axis."""
     ent = -(P * np.log(np.clip(P, _EPS, 1.0))).sum(axis=-1)
-    return np.clip(ent / np.log(K), 0.0, 1.0)
+    return np.clip(ent / np.log(k), 0.0, 1.0)
 
 
 def _jsd(P: np.ndarray, Q: np.ndarray) -> np.ndarray:
@@ -126,48 +152,449 @@ def _softmax_rows(L: np.ndarray) -> np.ndarray:
     return e / e.sum(axis=-1, keepdims=True)
 
 
-def _stack(
-    probs: Mapping[str, np.ndarray],
-    quality: Optional[Mapping[str, Optional[np.ndarray]]],
-    modalities: Sequence[str],
-    K: int,
-    sum_tol: float,
-):
-    """Validate and stack per-modality matrices into (M,N,K), mask (M,N), Q (M,N)."""
-    unknown = set(probs) - set(modalities)
-    if unknown:
-        raise ValueError(f"unknown modalities {sorted(unknown)}; expected {list(modalities)}")
-    n = None
-    for name, arr in probs.items():
-        if arr is not None:
-            n = np.asarray(arr).shape[0] if np.ndim(arr) else None
-            break
-    if n is None:
-        n = 0
-    M = len(modalities)
-    P = np.full((M, n, K), 1.0 / K)
-    avail = np.zeros((M, n), dtype=bool)
-    Q = np.ones((M, n))
-    reasons = np.full((M, n), "missing", dtype=object)
-    for i, name in enumerate(modalities):
-        arr = probs.get(name)
-        if arr is None:
-            continue
-        arr = np.asarray(arr, dtype=float)
-        if arr.shape[0] != n:
-            raise ValueError(f"modality {name!r} has {arr.shape[0]} rows, expected {n}")
-        clean, valid, reason = validate_prob_rows(arr, K, sum_tol)
-        P[i] = clean
-        avail[i] = valid
-        reasons[i] = reason
-        q = None if quality is None else quality.get(name)
-        if q is not None:
-            qa = np.asarray(q, dtype=float)
-            if qa.shape != (n,):
-                raise ValueError(f"quality for {name!r} must have shape ({n},)")
-            qa = np.where(np.isfinite(qa), np.clip(qa, 0.0, 1.0), 1.0)
-            Q[i] = qa
-    return P, avail, Q, reasons
+def _cond(P: np.ndarray, cols: np.ndarray) -> np.ndarray:
+    """Distribution restricted to ``cols`` and renormalised; uniform if it has no mass there."""
+    sub = P[..., cols]
+    tot = sub.sum(axis=-1, keepdims=True)
+    k = sub.shape[-1]
+    return np.where(tot > _EPS, sub / np.clip(tot, _EPS, None), 1.0 / k)
+
+
+def _pool(Pm: np.ndarray, w: np.ndarray, pooling: str, smoothing: float) -> np.ndarray:
+    """Pool distributions ``Pm`` (M, n, k) with weights ``w`` (M, n); weight 0 = not participating.
+
+    linear: weighted mean. log: weighted geometric mean (product of experts) with weights
+    scaled to average 1 over participants, after mixing a little uniform mass into every
+    expert so that a tiny probability is not an absolute veto.
+    """
+    k = Pm.shape[-1]
+    total = w.sum(axis=0)
+    wn = np.divide(w, total, out=np.zeros_like(w), where=total > 0)
+    if pooling == "linear":
+        out = np.einsum("mn,mnk->nk", wn, Pm)
+    else:
+        n_used = (w > 0).sum(axis=0)
+        Ps = (1.0 - smoothing) * Pm + smoothing / k
+        logp = np.einsum("mn,mnk->nk", wn * n_used, np.log(np.clip(Ps, _EPS, 1.0)))
+        out = _softmax_rows(logp)
+    out[total <= 0] = 1.0 / k
+    return out
+
+
+def _as_label_indices(y, labels: Sequence[str]) -> np.ndarray:
+    """Integer class indices from ints or label names; raises FusionInputError otherwise."""
+    arr = np.asarray(y)
+    if arr.ndim != 1:
+        raise FusionInputError(f"labels must be 1-D, got shape {arr.shape}")
+    K = len(labels)
+    if arr.dtype.kind in "US" or arr.dtype == object:
+        lookup = {l: i for i, l in enumerate(labels)}
+        bad = sorted({str(v) for v in arr if str(v) not in lookup})
+        if bad:
+            raise FusionInputError(f"labels not in the label set {list(labels)}: {bad[:5]}")
+        return np.array([lookup[str(v)] for v in arr], dtype=int)
+    if arr.dtype.kind == "f":
+        if not np.isfinite(arr).all() or not np.equal(np.mod(arr, 1), 0).all():
+            raise FusionInputError("labels must be integers or label names (got non-integer / NaN values)")
+    elif arr.dtype.kind not in "iub":
+        raise FusionInputError(f"labels must be integers or label names, got dtype {arr.dtype}")
+    arr = arr.astype(int)
+    if arr.size and (arr.min() < 0 or arr.max() >= K):
+        raise FusionInputError(
+            f"integer labels must be in [0, {K - 1}]; found min {arr.min()} and max {arr.max()}")
+    return arr
+
+
+# --------------------------------------------------------------------------- #
+# Reliability-aware fuser
+# --------------------------------------------------------------------------- #
+class ReliabilityAwareFuser:
+    """Calibrated, optionally reliability-weighted decision-level fusion.
+
+    ``ReliabilityAwareFuser(FusionConfig(...))`` or, equivalently, keyword
+    overrides ``ReliabilityAwareFuser(pooling="log", consistency_power=1.0)``.
+    All options and the evidence behind each default: ``FusionConfig.docs()``.
+    """
+
+    def __init__(self, config: Optional[FusionConfig] = None, **overrides):
+        if config is None:
+            config = FusionConfig(**overrides)
+        elif overrides:
+            config = replace(config, **overrides)
+        self.config = config
+        K = len(config.labels)
+        self.temperatures: Dict[str, float] = {m: 1.0 for m in config.modalities}
+        self.priors: Dict[str, float] = {m: 1.0 for m in config.modalities}
+        self.fit_report: Dict[str, dict] = {}
+        self.fitted = False
+        self._warned_unfitted = False
+        # Boolean support mask per modality (True = the model can predict that class).
+        self._support: Dict[str, np.ndarray] = {}
+        for m in config.modalities:
+            mask = np.ones(K, dtype=bool)
+            if m in config.modality_support:
+                mask = np.array([l in config.modality_support[m] for l in config.labels])
+            self._support[m] = mask
+        self._is_partial = np.array([not self._support[m].all() for m in config.modalities])
+        partial_sets = [self._support[m] for m, p in zip(config.modalities, self._is_partial) if p]
+        self._partial_mask: Optional[np.ndarray] = partial_sets[0] if partial_sets else None
+
+    def __getattr__(self, name):  # config options stay readable as attributes (f.pooling, ...)
+        cfg = self.__dict__.get("config")
+        if cfg is not None and hasattr(cfg, name):
+            return getattr(cfg, name)
+        raise AttributeError(name)
+
+    @property
+    def method(self) -> str:
+        c = self.config
+        plain = (not c.use_calibration and not c.use_priors and c.pooling == "linear"
+                 and c.confidence_power == 0 and c.quality_power == 0 and c.consistency_power == 0)
+        return "equal_weight" if plain else f"reliability_{c.pooling}"
+
+    # ------------------------------------------------------------------ fit
+    def fit(self, dev_probs: Mapping[str, np.ndarray], y_dev) -> "ReliabilityAwareFuser":
+        """Fit per-modality temperature and prior on a DEVELOPMENT split.
+
+        ``dev_probs[name]`` is ``(N, K)`` aligned with ``y_dev`` (integer indices or label
+        names). Rows that are missing/invalid are ignored. For a partial-support modality
+        only samples whose true class it can predict are used, and temperature/F1 are
+        computed on its conditional distribution over its supported classes (so they are
+        measured on a subset that excludes the classes it cannot see).
+        Never call this with test data. Raises ``FusionInputError`` on misaligned or
+        invalid inputs; the outcome per modality is stored in ``self.fit_report``.
+        """
+        cfg = self.config
+        K = len(cfg.labels)
+        unknown = set(dev_probs) - set(cfg.modalities)
+        if unknown:
+            raise FusionInputError(f"unknown modalities {sorted(unknown)}; expected {list(cfg.modalities)}")
+        y = _as_label_indices(y_dev, cfg.labels)
+        report, f1s = {}, {}
+        # Built from scratch and assigned only at the end: a re-fit never keeps state from an
+        # earlier fit, and a fit that raises leaves the fuser exactly as it was.
+        temps = {m: 1.0 for m in cfg.modalities}
+        priors = {m: 1.0 for m in cfg.modalities}
+        for name in cfg.modalities:
+            arr = dev_probs.get(name)
+            if arr is None:
+                continue
+            arr = np.asarray(arr, dtype=float)
+            if arr.ndim != 2 or arr.shape[0] != len(y):
+                raise FusionInputError(
+                    f"{name}: dev probabilities have shape {arr.shape} but y_dev has {len(y)} labels; "
+                    f"they must be row-aligned with shape (N, {K})")
+            mask = self._support[name]
+            clean, valid, _ = validate_prob_rows(arr, K, cfg.sum_tol, columns=mask)
+            in_support = mask[y]
+            use = valid & in_support
+            info = {"n_rows": int(len(y)), "n_valid": int(valid.sum()), "n_used": int(use.sum()),
+                    "supported_classes": [l for l, s in zip(cfg.labels, mask) if s]}
+            if use.sum() < cfg.min_fit_samples:
+                n_use = int(use.sum())
+                info["note"] = (
+                    "no usable dev rows; temperature and prior stay at 1.0" if n_use == 0 else
+                    f"only {n_use} usable dev rows (< min_fit_samples={cfg.min_fit_samples}); "
+                    "temperature and prior stay at 1.0")
+                _warnings.warn(f"{name}: {info['note']}", UserWarning, stacklevel=2)
+                report[name] = info
+                continue
+            cols = np.flatnonzero(mask)
+            pos = {c: i for i, c in enumerate(cols)}
+            Pv = clean[use][:, cols]
+            yv = np.array([pos[c] for c in y[use]])
+            T = fit_temperature(Pv, yv) if cfg.use_calibration else 1.0
+            temps[name] = T
+            at_bound = bool(cfg.use_calibration and temperature_at_bound(T))
+            if at_bound:
+                _warnings.warn(
+                    f"{name}: fitted temperature {T:.3g} is at the search bound [{T_MIN}, {T_MAX}]; the dev "
+                    "data is (nearly) separable or degenerate for this model, so this temperature is not "
+                    "trustworthy. Check the dev predictions before relying on calibration.",
+                    UserWarning, stacklevel=2)
+            f1 = max(macro_f1(yv, Pv.argmax(axis=1), len(cols)), cfg.weight_floor)
+            f1s[name] = f1
+            info.update(temperature=float(T), temperature_at_bound=at_bound, macro_f1=float(f1))
+            report[name] = info
+        if f1s:
+            mean = float(np.mean(list(f1s.values())))
+            for name, f in f1s.items():
+                priors[name] = f / mean
+        self.temperatures, self.priors = temps, priors
+        self.fit_report = report
+        self.fitted = True
+        return self
+
+    # ------------------------------------------------------------ batch core
+    def fuse_batch(
+        self,
+        probs: Mapping[str, Optional[np.ndarray]],
+        quality: Optional[Mapping[str, Optional[np.ndarray]]] = None,
+        n: Optional[int] = None,
+    ) -> BatchResult:
+        """Fuse ``N`` samples at once.
+
+        ``probs[name]`` is ``(N, K)`` or ``None``; an all-NaN row marks the modality as
+        missing for that sample. ``quality[name]`` is an optional ``(N,)`` array in [0, 1].
+        ``n`` is only needed when every modality is ``None``. Raises ``FusionInputError``
+        for unknown modality names, misaligned rows or wrong class counts. Invalid model
+        outputs are dropped and reported in ``status`` (or raise if ``config.strict``).
+        """
+        cfg = self.config
+        mods, K, M = cfg.modalities, len(cfg.labels), len(cfg.modalities)
+        if (cfg.use_calibration or cfg.use_priors) and not self.fitted and not self._warned_unfitted:
+            self._warned_unfitted = True
+            _warnings.warn(
+                "use_calibration/use_priors is on but fit() has not been called, so every temperature "
+                "and prior is 1.0 (nothing is calibrated). Call fit() on a development split, or set "
+                "use_calibration=False and use_priors=False to silence this.", UserWarning, stacklevel=2)
+        quality = quality or {}
+        for source, mapping in (("probs", probs), ("quality", quality)):
+            unknown = set(mapping) - set(mods)
+            if unknown:
+                raise FusionInputError(
+                    f"unknown modalities {sorted(unknown)} in {source}; expected {list(mods)}")
+
+        rows = {name: np.asarray(a).shape[0] if np.ndim(a) else None
+                for name, a in probs.items() if a is not None}
+        if any(r is None for r in rows.values()):
+            raise FusionInputError("probabilities must be 2-D (N, K); got a scalar")
+        if len(set(rows.values())) > 1:
+            raise FusionInputError(f"modalities have different row counts: {rows}")
+        N = next(iter(rows.values())) if rows else (0 if n is None else int(n))
+
+        P = np.full((M, N, K), 1.0 / K)
+        avail = np.zeros((M, N), dtype=bool)
+        status = np.full((M, N), MISSING, dtype=object)
+        Q = np.ones((M, N))
+        qstat = np.full((M, N), "unknown", dtype=object)
+        for i, name in enumerate(mods):
+            arr = probs.get(name)
+            if arr is not None:
+                clean, valid, reason = validate_prob_rows(
+                    self._named(name, arr), K, cfg.sum_tol, columns=self._support[name])
+                P[i], avail[i], status[i] = clean, valid, reason
+            Q[i], qstat[i] = validate_quality_array(quality.get(name), N, name)
+
+        if cfg.strict:
+            self._raise_if_invalid(mods, status, qstat, avail)
+
+        # ---- calibration (temperatures were fitted on dev data) ----------------------------
+        if cfg.use_calibration:
+            for i, name in enumerate(mods):
+                T = self.temperatures[name]
+                if self._is_partial[i]:
+                    P[i] = apply_temperature_masked(P[i], T, self._support[name])
+                else:
+                    P[i] = apply_temperature(P[i], T)
+
+        # ---- pairwise agreement, compared on the classes both models can predict ------------
+        floor = cfg.weight_floor
+        jsd = np.zeros((M, M, N))
+        differ = np.zeros((M, M, N), dtype=bool)
+        measurable = np.ones((M, M, N), dtype=bool)
+        for i in range(M):
+            for j in range(i + 1, M):
+                common = self._support[mods[i]] & self._support[mods[j]]
+                if common.all():
+                    a, b = P[i], P[j]
+                else:
+                    a, b = _cond(P[i], common), _cond(P[j], common)
+                    # A modality with ~no mass on the shared classes says nothing about them; do not
+                    # let the uniform fallback of _cond() manufacture a disagreement score.
+                    shared = ((P[i][:, common].sum(axis=1) > _MIN_SHARED_MASS)
+                              & (P[j][:, common].sum(axis=1) > _MIN_SHARED_MASS))
+                    measurable[i, j] = measurable[j, i] = shared
+                jsd[i, j] = jsd[j, i] = _jsd(a, b)
+                differ[i, j] = differ[j, i] = a.argmax(axis=1) != b.argmax(axis=1)
+        pair = (avail[:, None, :] & avail[None, :, :] & ~np.eye(M, dtype=bool)[:, :, None]
+                & measurable)
+        # A full-support modality's agreement score must not depend on a partial-support one: the
+        # partial modality (text) may only redistribute mass inside its own classes, never change the
+        # base weights (and through them P(supported classes), P(neutral), P(disgust)).
+        excl = (~self._is_partial)[:, None] & self._is_partial[None, :]       # row full, column partial
+        pair_w = pair & ~excl[:, :, None]
+        cnt = pair_w.sum(axis=1)
+        mean_jsd = (jsd * pair_w).sum(axis=1) / np.maximum(cnt, 1)
+        cons = np.where(cnt > 0, np.clip(1.0 - mean_jsd, floor, 1.0), 1.0)
+
+        # ---- reliability weights ------------------------------------------------------------
+        conf = np.empty((M, N))
+        for i, name in enumerate(mods):
+            mask = self._support[name]
+            conf[i] = 1.0 - _entropy_norm(P[i][:, mask], int(mask.sum()))
+        conf = np.clip(conf, floor, 1.0)
+        prior = np.array([self.priors[m] if cfg.use_priors else 1.0 for m in mods])
+        w = (prior[:, None]
+             * conf ** cfg.confidence_power
+             * np.clip(Q, floor, 1.0) ** cfg.quality_power
+             * cons ** cfg.consistency_power)
+        w = np.where(avail, np.maximum(w, floor * prior[:, None]), 0.0)
+        total = w.sum(axis=0)
+        wn = np.divide(w, total, out=np.zeros_like(w), where=total > 0)
+        n_avail = avail.sum(axis=0)
+
+        # ---- pooling --------------------------------------------------------------------------
+        # Base fusion: the full-support modalities only, exactly as if no partial-support modality
+        # existed (so with no such modality configured this is the whole pooling step).
+        w_full = np.where(self._is_partial[:, None], 0.0, w)
+        fused = _pool(P, w_full, cfg.pooling, cfg.smoothing)
+        partial_only = np.zeros(N, dtype=bool)
+        if self._partial_mask is not None:
+            s = self._partial_mask
+            part_av = (avail & self._is_partial[:, None]).any(axis=0)
+            full_av = (avail & ~self._is_partial[:, None]).any(axis=0)
+            both, only_partial = part_av & full_av, part_av & ~full_av
+            if both.any() or only_partial.any():
+                # A partial-support model (e.g. text, no neutral/disgust) outputs P(c | x, c in S).
+                # It can say nothing about S-versus-rest, so it never moves mass between them:
+                #   c outside S :  P(c) = P_base(c)                       (untouched)
+                #   c in S      :  P(c) = P_base(S) * q(c)
+                # where q updates the base's own within-S conditional with the text conditional(s).
+                Pc = _cond(P, s)                                                  # (M, N, |S|)
+                w_part = np.where(self._is_partial[:, None], w, 0.0)
+                bS = _cond(fused, s)                                              # base | S
+                mass_S = fused[:, s].sum(axis=1, keepdims=True)
+                Wb = w_full.sum(axis=0)
+                if cfg.pooling == "linear":
+                    num = Wb[:, None] * bS + np.einsum("mn,mnk->nk", w_part, Pc)
+                    q = num / np.clip(Wb + w_part.sum(axis=0), _EPS, None)[:, None]
+                else:
+                    # Bayes-style update: q ~ base|S * prod_i t_i^nu_i, nu_i = weight relative to
+                    # the mean full-support weight (1 for equal weights). A uniform t is the identity.
+                    n_full = np.maximum((w_full > 0).sum(axis=0), 1)
+                    nu = w_part / np.clip(Wb / n_full, _EPS, None)                # (M, N)
+                    Ps = (1.0 - cfg.smoothing) * Pc + cfg.smoothing / Pc.shape[-1]
+                    logq = (np.log(np.clip(bS, _EPS, 1.0))
+                            + np.einsum("mn,mnk->nk", nu, np.log(np.clip(Ps, _EPS, 1.0))))
+                    q = _softmax_rows(logq)
+                combo = fused.copy()
+                combo[:, s] = mass_S * q
+                fused[both] = combo[both]
+                only = np.full_like(fused, np.nan)                 # no full-support evidence at all:
+                only[:, s] = _pool(Pc, w_part, cfg.pooling, cfg.smoothing)   # restricted to S, flagged
+                fused[only_partial] = only[only_partial]
+                partial_only = only_partial
+
+        none = n_avail == 0
+        fused[none] = np.nan            # no modality, no prediction: do not invent a distribution
+        partial_only = partial_only & ~none
+
+        # ---- conflict -----------------------------------------------------------------------
+        n_pairs = np.maximum(pair.sum(axis=(0, 1)) / 2.0, 1)
+        conflict_score = (jsd * pair).sum(axis=(0, 1)) / 2.0 / n_pairs
+        any_differ = ((differ & pair).sum(axis=(0, 1)) > 0)
+        conflict = any_differ & (n_avail > 1) & (conflict_score >= cfg.conflict_threshold)
+
+        scored = np.where(np.isnan(fused), -np.inf, fused)
+        pred = np.where(none, -1, scored.argmax(axis=1))
+        confidence = np.where(none, 0.0, scored.max(axis=1))
+        uncertain = none | conflict | (confidence < cfg.min_confidence)
+        return BatchResult(
+            probs=fused, pred=pred, confidence=confidence, weights=wn, available=avail,
+            conflict_score=conflict_score, conflict=conflict, uncertain=uncertain,
+            modalities=mods, status=status, quality_status=qstat, partial_only=partial_only,
+            labels=cfg.labels,
+        )
+
+    # ------------------------------------------------------------ helpers
+    @staticmethod
+    def _named(name: str, arr) -> np.ndarray:
+        try:
+            return np.asarray(arr, dtype=float)
+        except (TypeError, ValueError) as exc:
+            raise FusionInputError(f"{name}: probabilities are not numeric ({exc})") from None
+
+    @staticmethod
+    def _raise_if_invalid(mods, status, qstat, avail):
+        problems = []
+        for i, name in enumerate(mods):
+            c = Counter(s for s in status[i].tolist() if s in INVALID)
+            if c:
+                problems.append(f"{name}: {dict(c)}")
+            qc = Counter(s for s, a in zip(qstat[i].tolist(), status[i].tolist())
+                         if s in (Q_CLIPPED, Q_INVALID) and a not in (MISSING,))
+            if qc:
+                problems.append(f"{name} quality: {dict(qc)}")
+        if problems:
+            raise FusionInputError("strict mode: invalid model outputs -- " + "; ".join(problems))
+
+    # ------------------------------------------------------------ single sample
+    def fuse(self, inputs: Mapping[str, InputLike]) -> FusionResult:
+        """Fuse one sample (wrapper around ``fuse_batch``; identical validation and maths).
+
+        Bad model outputs are dropped with a warning (or raise if ``config.strict``).
+        A wrong vector length or an unknown modality name raises ``FusionInputError``.
+        """
+        cfg = self.config
+        K = len(cfg.labels)
+        unknown = set(inputs) - set(cfg.modalities)
+        if unknown:
+            raise FusionInputError(f"unknown modalities {sorted(unknown)}; expected {list(cfg.modalities)}")
+        probs: Dict[str, Optional[np.ndarray]] = {}
+        quality: Dict[str, np.ndarray] = {}
+        for name in cfg.modalities:
+            raw = inputs.get(name)
+            mi = raw if isinstance(raw, ModalityInput) else ModalityInput(probs=raw)
+            if mi.probs is None:
+                probs[name] = None
+            else:
+                arr = self._named(name, mi.probs)
+                if arr.shape != (K,):
+                    raise FusionInputError(f"{name}: expected {K} class probabilities, got shape {arr.shape}")
+                probs[name] = arr[None, :]
+            if mi.quality is not None:
+                # A number (or a one-element array) is fine; NaN/inf is reported as 'invalid' by the
+                # shared validation. Anything non-numeric is a caller bug and must not be hidden.
+                try:
+                    qa = np.asarray(mi.quality, dtype=float)
+                except (TypeError, ValueError):
+                    raise FusionInputError(f"{name}: quality is not numeric: {mi.quality!r}") from None
+                if qa.size != 1:
+                    raise FusionInputError(
+                        f"{name}: quality must be a single number for one sample, got shape {qa.shape}")
+                quality[name] = qa.reshape(1)
+        b = self.fuse_batch(probs, quality, n=1)
+
+        used = [m for i, m in enumerate(cfg.modalities) if b.available[i, 0]]
+        missing = [m for m in cfg.modalities if m not in used]
+        st = {m: str(b.status[i, 0]) for i, m in enumerate(cfg.modalities)}
+        qs = {m: str(b.quality_status[i, 0]) for i, m in enumerate(cfg.modalities)}
+        warnings: List[str] = []
+        for m in cfg.modalities:
+            if st[m] in INVALID:
+                warnings.append(f"{m}: dropped ({st[m]})")
+            elif st[m] == RENORMALIZED:
+                warnings.append(f"{m}: renormalized")
+            if st[m] != MISSING:
+                if qs[m] == Q_CLIPPED:
+                    warnings.append(f"{m}: quality outside [0, 1]; clipped")
+                elif qs[m] == Q_INVALID:
+                    warnings.append(f"{m}: quality is not finite; ignored")
+        common = dict(method=self.method, status=st, quality_status=qs)
+        if not used:
+            return FusionResult(
+                label=None, label_index=-1, probs=np.full(K, np.nan), confidence=0.0, margin=0.0,
+                available=[], missing=missing, weights={}, conflict_score=0.0, conflict=False,
+                uncertain=True, warnings=warnings + ["no usable modality"], **common)
+        p = b.probs[0]
+        scored = np.where(np.isnan(p), -np.inf, p)
+        top2 = np.sort(scored)[-2:]
+        idx = int(b.pred[0])
+        if bool(b.partial_only[0]):
+            covered = [l for l, s in zip(cfg.labels, self._partial_mask) if s]
+            warnings.append(
+                f"only partial-class-support modalities available ({', '.join(used)}): the prediction is "
+                f"restricted to {covered}; the other classes were not scored and confidence is "
+                f"conditional on those classes")
+        return FusionResult(
+            label=cfg.labels[idx], label_index=idx, probs=p, confidence=float(b.confidence[0]),
+            margin=float(top2[1] - top2[0]) if np.isfinite(top2[0]) else float(top2[1]),
+            available=used, missing=missing,
+            weights={m: float(b.weights[i, 0]) for i, m in enumerate(cfg.modalities) if m in used},
+            conflict_score=float(b.conflict_score[0]), conflict=bool(b.conflict[0]),
+            uncertain=bool(b.uncertain[0]), warnings=warnings,
+            partial_only=bool(b.partial_only[0]), **common)
 
 
 # --------------------------------------------------------------------------- #
@@ -181,299 +608,10 @@ def equal_weight_fusion(
 ) -> FusionResult:
     """Reference baseline: plain average of the available, valid modalities.
 
-    Missing or invalid modalities are skipped (never counted as neutral), and
-    the average is over the modalities that remain. This is the simple method
-    the reliability-aware fuser is compared against.
+    Same validation as the main fuser; missing or invalid modalities are skipped
+    (never counted as neutral) and the average is over what remains. No calibration,
+    no weighting. This is the method the reliability-aware fuser is compared against.
     """
-    unknown = set(inputs) - set(modalities)
-    if unknown:
-        raise ValueError(f"unknown modalities {sorted(unknown)}; expected {list(modalities)}")
-    K = len(labels)
-    used, missing, warnings = [], [], []
-    rows = []
-    for name in modalities:
-        mi = _coerce(inputs.get(name))
-        if mi.probs is None:
-            missing.append(name)
-            continue
-        clean, valid, reason = validate_prob_rows(np.asarray(mi.probs, dtype=float)[None, :], K, sum_tol)
-        if not valid[0]:
-            missing.append(name)
-            warnings.append(f"{name}: dropped ({reason[0]})")
-            continue
-        if reason[0] != "ok":
-            warnings.append(f"{name}: {reason[0]}")
-        used.append(name)
-        rows.append(clean[0])
-    return _finish(
-        np.mean(rows, axis=0) if rows else None,
-        labels, used, missing, {n: 1.0 / len(used) for n in used},
-        0.0, "equal_weight", warnings,
-        conflict_score=_pairwise_mean_jsd(np.array(rows)) if len(rows) > 1 else 0.0,
-        conflict_threshold=None, rows=rows,
-    )
-
-
-def _pairwise_mean_jsd(rows: np.ndarray) -> float:
-    m = len(rows)
-    if m < 2:
-        return 0.0
-    vals = [float(_jsd(rows[i], rows[j])) for i in range(m) for j in range(i + 1, m)]
-    return float(np.mean(vals))
-
-
-def _finish(
-    probs, labels, used, missing, weights, min_confidence, method,
-    warnings, conflict_score, conflict_threshold, rows,
-) -> FusionResult:
-    K = len(labels)
-    if probs is None:
-        return FusionResult(
-            label=None, label_index=-1, probs=np.full(K, 1.0 / K), confidence=0.0,
-            margin=0.0, available=[], missing=list(missing), weights={},
-            conflict_score=0.0, conflict=False, uncertain=True, method=method,
-            warnings=list(warnings) + ["no usable modality"],
-        )
-    idx = int(np.argmax(probs))
-    top2 = np.sort(probs)[-2:]
-    conflict = False
-    if conflict_threshold is not None and len(rows) > 1:
-        argmaxes = {int(np.argmax(r)) for r in rows}
-        conflict = len(argmaxes) > 1 and conflict_score >= conflict_threshold
-    confidence = float(probs[idx])
-    return FusionResult(
-        label=labels[idx], label_index=idx, probs=np.asarray(probs), confidence=confidence,
-        margin=float(top2[1] - top2[0]), available=list(used), missing=list(missing),
-        weights=dict(weights), conflict_score=float(conflict_score), conflict=bool(conflict),
-        uncertain=bool(conflict or confidence < min_confidence), method=method,
-        warnings=list(warnings),
-    )
-
-
-# --------------------------------------------------------------------------- #
-# Reliability-aware fuser
-# --------------------------------------------------------------------------- #
-class ReliabilityAwareFuser:
-    """Calibrated, reliability-weighted decision-level fusion.
-
-    Parameters
-    ----------
-    labels : class names; every probability vector must follow this order.
-    modalities : modality names (order is fixed for batch arrays).
-    pooling : ``"linear"`` -- weighted mean of probabilities (the formula in the
-        project brief). ``"log"`` -- weighted geometric pooling (product of
-        experts); weights are scaled to average 1 so equal weights give the
-        plain product of experts. Log pooling lets a confident, reliable
-        modality overrule several unsure ones.
-    confidence_power, quality_power, consistency_power : exponents ``gamma``,
-        ``beta``, ``lambda`` above. 0 disables that factor.
-    use_priors : multiply by the fitted per-modality prior (needs ``fit``).
-    use_calibration : apply fitted temperatures (needs ``fit``).
-    weight_floor : lower bound on every factor so a weight never hits exactly 0.
-    conflict_threshold : mean pairwise JSD (bits) above which differing
-        arg-maxes are reported as a conflict.
-    min_confidence : fused confidence below this marks the result ``uncertain``.
-    smoothing : weight of a uniform distribution mixed into each modality before
-        log pooling, so a probability of exactly 0 is not an absolute veto.
-    """
-
-    def __init__(
-        self,
-        labels: Sequence[str] = MELD_LABELS,
-        modalities: Sequence[str] = MODALITIES,
-        pooling: str = "linear",
-        confidence_power: float = 1.0,
-        quality_power: float = 1.0,
-        consistency_power: float = 0.0,
-        use_priors: bool = True,
-        use_calibration: bool = True,
-        weight_floor: float = 1e-3,
-        conflict_threshold: float = 0.25,
-        min_confidence: float = 0.0,
-        sum_tol: float = 1e-3,
-        smoothing: float = 0.01,
-    ):
-        if pooling not in ("linear", "log"):
-            raise ValueError("pooling must be 'linear' or 'log'")
-        if not 0.0 <= smoothing < 1.0:
-            raise ValueError("smoothing must be in [0, 1)")
-        self.smoothing = float(smoothing)
-        self.labels = tuple(labels)
-        self.modalities = tuple(modalities)
-        self.pooling = pooling
-        self.confidence_power = float(confidence_power)
-        self.quality_power = float(quality_power)
-        self.consistency_power = float(consistency_power)
-        self.use_priors = use_priors
-        self.use_calibration = use_calibration
-        self.weight_floor = float(weight_floor)
-        self.conflict_threshold = float(conflict_threshold)
-        self.min_confidence = float(min_confidence)
-        self.sum_tol = float(sum_tol)
-        self.temperatures: Dict[str, float] = {m: 1.0 for m in self.modalities}
-        self.priors: Dict[str, float] = {m: 1.0 for m in self.modalities}
-        self.fitted = False
-
-    # ------------------------------------------------------------------ fit
-    def fit(self, dev_probs: Mapping[str, np.ndarray], y_dev: np.ndarray) -> "ReliabilityAwareFuser":
-        """Fit per-modality temperature and prior on a DEVELOPMENT split.
-
-        ``dev_probs[name]`` is ``(N, K)``; rows that are missing/invalid are
-        ignored. The prior is the modality's macro-F1 on its valid rows,
-        rescaled so priors average to 1. Do not call this with test data.
-        """
-        y_dev = np.asarray(y_dev, dtype=int)
-        K = len(self.labels)
-        f1s = {}
-        for name in self.modalities:
-            arr = dev_probs.get(name)
-            if arr is None:
-                continue
-            clean, valid, _ = validate_prob_rows(np.asarray(arr, dtype=float), K, self.sum_tol)
-            if valid.sum() == 0:
-                continue
-            Pv, yv = clean[valid], y_dev[valid]
-            self.temperatures[name] = fit_temperature(Pv, yv)
-            f1s[name] = max(macro_f1(yv, Pv.argmax(axis=1), K), self.weight_floor)
-        if f1s:
-            mean = np.mean(list(f1s.values()))
-            for name, f in f1s.items():
-                self.priors[name] = f / mean
-        self.fitted = True
-        return self
-
-    # ------------------------------------------------------------ batch core
-    def fuse_batch(
-        self,
-        probs: Mapping[str, Optional[np.ndarray]],
-        quality: Optional[Mapping[str, Optional[np.ndarray]]] = None,
-    ) -> BatchResult:
-        """Fuse ``N`` samples at once.
-
-        ``probs[name]`` is ``(N, K)``; an all-NaN row (or a ``None`` entry)
-        marks the modality as missing for that sample. ``quality[name]`` is an
-        optional ``(N,)`` array in [0, 1].
-        """
-        K = len(self.labels)
-        M = len(self.modalities)
-        P, avail, Q, _ = _stack(probs, quality, self.modalities, K, self.sum_tol)
-        N = P.shape[1]
-
-        if self.use_calibration:
-            for i, name in enumerate(self.modalities):
-                P[i] = apply_temperature(P[i], self.temperatures[name])
-
-        # --- reliability factors -------------------------------------------
-        floor = self.weight_floor
-        conf = np.clip(1.0 - _entropy_norm(P), floor, 1.0)                # (M, N)
-
-        jsd = np.zeros((M, M, N))
-        for i in range(M):
-            for j in range(i + 1, M):
-                jsd[i, j] = jsd[j, i] = _jsd(P[i], P[j])
-        pair = avail[:, None, :] & avail[None, :, :] & ~np.eye(M, dtype=bool)[:, :, None]
-        cnt = pair.sum(axis=1)                                             # (M, N)
-        mean_jsd = (jsd * pair).sum(axis=1) / np.maximum(cnt, 1)
-        cons = np.where(cnt > 0, np.clip(1.0 - mean_jsd, floor, 1.0), 1.0)
-
-        prior = np.array([self.priors[m] if self.use_priors else 1.0 for m in self.modalities])
-        w = (
-            prior[:, None]
-            * conf ** self.confidence_power
-            * np.clip(Q, floor, 1.0) ** self.quality_power
-            * cons ** self.consistency_power
-        )
-        w = np.where(avail, np.maximum(w, floor * prior[:, None]), 0.0)
-        total = w.sum(axis=0)
-        n_avail = avail.sum(axis=0)
-        wn = np.divide(w, total, out=np.zeros_like(w), where=total > 0)
-
-        # --- pooling ---------------------------------------------------------
-        if self.pooling == "linear":
-            fused = np.einsum("mn,mnk->nk", wn, P)
-        else:
-            wlog = wn * n_avail  # average weight 1 over available modalities
-            # Mix with uniform first so one modality's ~0 probability for a class
-            # (e.g. a text model that has no "neutral" class) cannot veto it.
-            Ps = (1.0 - self.smoothing) * P + self.smoothing / K
-            logp = np.einsum("mn,mnk->nk", wlog, np.log(np.clip(Ps, _EPS, 1.0)))
-            fused = _softmax_rows(logp)
-        none = n_avail == 0
-        fused[none] = 1.0 / K
-
-        # --- conflict --------------------------------------------------------
-        n_pairs = np.maximum(n_avail * (n_avail - 1) / 2.0, 1)
-        conflict_score = (jsd * pair).sum(axis=(0, 1)) / 2.0 / n_pairs
-        argmaxes = P.argmax(axis=2)                                        # (M, N)
-        a_masked = np.where(avail, argmaxes, -1)
-        first = np.where(avail.any(axis=0), a_masked.max(axis=0), -1)
-        differ = (avail & (argmaxes != first[None, :])).any(axis=0)
-        conflict = differ & (n_avail > 1) & (conflict_score >= self.conflict_threshold)
-
-        pred = np.where(none, -1, fused.argmax(axis=1))
-        confidence = np.where(none, 0.0, fused.max(axis=1))
-        uncertain = none | conflict | (confidence < self.min_confidence)
-        return BatchResult(
-            probs=fused, pred=pred, confidence=confidence, weights=wn, available=avail,
-            conflict_score=conflict_score, conflict=conflict, uncertain=uncertain,
-            modalities=self.modalities,
-        )
-
-    # ------------------------------------------------------------ single
-    def fuse(self, inputs: Mapping[str, InputLike]) -> FusionResult:
-        """Fuse one sample. Never raises on bad model outputs; drops them and warns."""
-        unknown = set(inputs) - set(self.modalities)
-        if unknown:
-            raise ValueError(f"unknown modalities {sorted(unknown)}; expected {list(self.modalities)}")
-        K = len(self.labels)
-        probs: Dict[str, Optional[np.ndarray]] = {}
-        quality: Dict[str, np.ndarray] = {}
-        warnings: List[str] = []
-        for name in self.modalities:
-            mi = _coerce(inputs.get(name))
-            if mi.probs is None:
-                probs[name] = None
-                continue
-            arr = np.asarray(mi.probs, dtype=float)
-            if arr.shape != (K,):
-                raise ValueError(f"{name}: expected {K} class probabilities, got shape {arr.shape}")
-            probs[name] = arr[None, :]
-            q, qwarn = validate_quality(mi.quality)
-            if qwarn:
-                warnings.append(f"{name}: {qwarn}")
-            if q is not None:
-                quality[name] = np.array([q])
-
-        # Re-run validation here only to report reasons; the batch path repeats it.
-        for name in self.modalities:
-            if probs[name] is None:
-                continue
-            _, valid, reason = validate_prob_rows(probs[name], K, self.sum_tol)
-            if not valid[0]:
-                warnings.append(f"{name}: dropped ({reason[0]})")
-            elif reason[0] != "ok":
-                warnings.append(f"{name}: {reason[0]}")
-
-        # Batch path needs equal row counts; absent modalities stay None.
-        if all(v is None for v in probs.values()):
-            return _finish(None, self.labels, [], list(self.modalities), {},
-                           self.min_confidence, f"reliability_{self.pooling}", warnings,
-                           0.0, self.conflict_threshold, [])
-        b = self.fuse_batch(probs, quality)
-        used = [m for i, m in enumerate(self.modalities) if b.available[i, 0]]
-        missing = [m for m in self.modalities if m not in used]
-        if not used:
-            return _finish(None, self.labels, [], missing, {}, self.min_confidence,
-                           f"reliability_{self.pooling}", warnings, 0.0,
-                           self.conflict_threshold, [])
-        weights = {m: float(b.weights[i, 0]) for i, m in enumerate(self.modalities) if m in used}
-        idx = int(b.pred[0])
-        top2 = np.sort(b.probs[0])[-2:]
-        return FusionResult(
-            label=self.labels[idx], label_index=idx, probs=b.probs[0],
-            confidence=float(b.confidence[0]), margin=float(top2[1] - top2[0]),
-            available=used, missing=missing, weights=weights,
-            conflict_score=float(b.conflict_score[0]), conflict=bool(b.conflict[0]),
-            uncertain=bool(b.uncertain[0]), method=f"reliability_{self.pooling}",
-            warnings=warnings,
-        )
+    cfg = FusionConfig.equal_weight_baseline(labels=tuple(labels), modalities=tuple(modalities),
+                                             sum_tol=sum_tol)
+    return ReliabilityAwareFuser(cfg).fuse(inputs)

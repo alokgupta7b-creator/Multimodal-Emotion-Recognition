@@ -1,7 +1,13 @@
 """Adapters from the teammates' model outputs to the fusion input format.
 
-These are duck-typed on purpose (no imports of ``speech_emotion`` / sklearn),
-so the fusion package stays independent of the other modules.
+Duck-typed on purpose (no imports of ``speech_emotion`` or scikit-learn), so the fusion
+package stays independent of the other modules and of their dependencies.
+
+Text model policy (see ``fusion/DESIGN_partial_support.md``): the text model was trained
+on ``dair-ai/emotion`` and cannot predict MELD's ``neutral`` or ``disgust``. Its output is
+therefore NOT padded with zeros. Unsupported classes are emitted as NaN and declared in
+``FusionConfig.modality_support`` (use ``text_support_config()``), so the fuser reads
+the text vector only as a distribution *over the classes the model knows*.
 """
 from __future__ import annotations
 
@@ -9,16 +15,33 @@ from typing import Mapping, Optional, Sequence
 
 import numpy as np
 
+from .config import FusionConfig
 from .core import ModalityInput
 from .labels import MELD_LABELS, remap_probs
 
-# Label order of the text model trained on `dair-ai/emotion` (see text_emotion/predict.py).
-# NOTE: this differs from MELD -- there is no neutral/disgust, and there is "love".
+# Class order of the text model trained on `dair-ai/emotion` (class ids 0..5, see
+# text_emotion/predict.py). There is no neutral/disgust, and there is "love".
 DAIR_EMOTION_LABELS = ("sadness", "joy", "love", "anger", "fear", "surprise")
 
-# A modelling decision, not a fact: agree it with the text-model owner. "love" is
-# folded into "joy"; MELD's "neutral" and "disgust" get probability 0 from this model.
+# MODELLING ASSUMPTION, not a fact: "love" is folded into "joy". Agree it with the text-model
+# owner; "love" is not identical to MELD's "joy". Pass ``mapping=`` to use another rule
+# (``{"love": None}`` drops it instead).
 DAIR_TO_MELD = {"love": "joy"}
+
+# MELD classes the text model can predict under the mapping above.
+TEXT_SUPPORT = ("anger", "fear", "joy", "sadness", "surprise")
+
+
+def text_support_config(**overrides) -> FusionConfig:
+    """A ``FusionConfig`` declaring that the text model only covers ``TEXT_SUPPORT``.
+
+    ``pooling`` defaults to ``"log"`` here (not the global default): with log pooling a text
+    vector that is uniform over its classes is exactly the identity, with linear pooling it
+    still flattens the distribution inside the supported classes
+    (``fusion/DESIGN_partial_support.md``). Pass ``pooling="linear"`` to override.
+    """
+    overrides.setdefault("pooling", "log")
+    return FusionConfig(modality_support={"text": TEXT_SUPPORT}, **overrides)
 
 
 def from_ser_prediction(pred, quality: Optional[float] = None) -> ModalityInput:
@@ -35,11 +58,28 @@ def from_text_probs(
     mapping: Optional[Mapping[str, Optional[str]]] = None,
     quality: Optional[float] = None,
 ) -> ModalityInput:
-    """Text-model probabilities (e.g. ``model.predict_proba``) -> MELD-ordered ``ModalityInput``.
+    """Text-model probabilities (source label order) -> MELD-ordered ``ModalityInput``.
 
-    ``probs`` must follow ``src_labels`` order. For a scikit-learn pipeline,
-    pass ``[model.classes_ mapped to names]`` accordingly (the repo's text model
-    outputs integer classes 0..5 in the dair-ai order above).
+    Classes the text model cannot predict are NaN, never 0. Use together with
+    ``text_support_config()``; if the fuser is NOT told about the support, the NaN
+    makes it drop the text modality with status ``non_finite`` rather than silently
+    treating NaN as zero evidence.
     """
-    out = remap_probs(probs, src_labels, MELD_LABELS, DAIR_TO_MELD if mapping is None else mapping)
+    out = remap_probs(probs, src_labels, MELD_LABELS,
+                      DAIR_TO_MELD if mapping is None else mapping, missing_fill=np.nan)
     return ModalityInput(probs=out, quality=quality)
+
+
+def text_probs_from_model(model, texts: Sequence[str]) -> np.ndarray:
+    """``(N, 7)`` MELD-ordered text probabilities (NaN for unsupported classes) from a
+    scikit-learn-style model with ``predict_proba`` and ``classes_`` holding the integer
+    ``dair-ai/emotion`` class ids. ``texts`` must already be preprocessed the way the text
+    model was trained (``text_emotion.preprocessing.preprocess_text``); this function does
+    not preprocess anything.
+    """
+    raw = np.asarray(model.predict_proba(list(texts)), dtype=float)
+    classes = [int(c) for c in model.classes_]
+    if sorted(classes) != list(range(len(DAIR_EMOTION_LABELS))):
+        raise ValueError(f"unexpected text model classes_ {classes}; expected ids 0..{len(DAIR_EMOTION_LABELS) - 1}")
+    ordered = raw[:, [classes.index(i) for i in range(len(DAIR_EMOTION_LABELS))]]
+    return remap_probs(ordered, DAIR_EMOTION_LABELS, MELD_LABELS, DAIR_TO_MELD, missing_fill=np.nan)

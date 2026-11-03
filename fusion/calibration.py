@@ -11,6 +11,14 @@ from __future__ import annotations
 import numpy as np
 
 _EPS = 1e-12
+# Search range of ``fit_temperature``. A fitted value next to either bound means the data
+# (nearly) prefers "no softening at all" or "completely flat" and should not be trusted.
+T_MIN, T_MAX = 0.05, 20.0
+
+
+def temperature_at_bound(T: float, margin: float = 1.25) -> bool:
+    """True if ``T`` sits within ``margin`` x of the search range's edge."""
+    return bool(T <= T_MIN * margin or T >= T_MAX / margin)
 
 
 def apply_temperature(P: np.ndarray, T: float) -> np.ndarray:
@@ -35,7 +43,7 @@ def fit_temperature(P: np.ndarray, y: np.ndarray) -> float:
     y = np.asarray(y, dtype=int)
     if len(y) == 0:
         return 1.0
-    grid = np.geomspace(0.05, 20.0, 120)
+    grid = np.geomspace(T_MIN, T_MAX, 120)
     losses = [nll(apply_temperature(P, t), y) for t in grid]
     best = grid[int(np.argmin(losses))]
     fine = np.geomspace(best / 1.15, best * 1.15, 60)
@@ -54,3 +62,18 @@ def expected_calibration_error(P: np.ndarray, y: np.ndarray, n_bins: int = 10) -
         if m.any():
             ece += m.mean() * abs(correct[m].mean() - conf[m].mean())
     return float(ece)
+
+
+def apply_temperature_masked(P: np.ndarray, T: float, mask: np.ndarray) -> np.ndarray:
+    """Temperature-scale only the columns in ``mask`` (a model's supported classes).
+
+    The supported columns are first renormalised to a conditional distribution
+    (``P(c | c in support)``); other columns are returned as 0 -- a placeholder,
+    not a probability.
+    """
+    mask = np.asarray(mask, dtype=bool)
+    out = np.zeros(P.shape, dtype=float)
+    sub = P[..., mask]
+    sub = sub / np.clip(sub.sum(axis=-1, keepdims=True), _EPS, None)
+    out[..., mask] = apply_temperature(sub, T)
+    return out

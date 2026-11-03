@@ -1,6 +1,10 @@
 import numpy as np
 import pytest
 
+# These tests exercise un-fitted fusers on purpose; the "not fitted" warning has its own test
+# in test_fusion_p0.py.
+pytestmark = pytest.mark.filterwarnings("ignore:use_calibration/use_priors is on:UserWarning")
+
 from fusion import (
     MELD_LABELS,
     ModalityInput,
@@ -267,9 +271,10 @@ class TestAdapters:
         p[DAIR_EMOTION_LABELS.index("joy")] = 0.2
         p[DAIR_EMOTION_LABELS.index("anger")] = 0.2
         out = np.asarray(from_text_probs(p).probs)
-        assert out.shape == (K,) and out.sum() == pytest.approx(1.0)
+        assert out.shape == (K,) and np.nansum(out) == pytest.approx(1.0)
         assert out[JOY] == pytest.approx(0.8)                       # love folded into joy
-        assert out[NEU] == 0.0 and out[MELD_LABELS.index("disgust")] == 0.0
+        # Classes the text model cannot predict are NaN ("not covered"), never a 0 probability.
+        assert np.isnan(out[NEU]) and np.isnan(out[MELD_LABELS.index("disgust")])
 
 
 class TestSmoothing:
