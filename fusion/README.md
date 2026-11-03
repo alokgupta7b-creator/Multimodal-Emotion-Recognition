@@ -182,6 +182,15 @@ a non-numeric cell, a modality with only one split, or no prediction files at al
 Everything is chosen on dev (candidate by dialogue-grouped out-of-fold macro-F1; abstention threshold; conflict-flag decision) and one frozen choice
 is reported on test: each modality alone, equal-weight baseline, all candidates, the selected configuration for every subset of modalities
 available at test time, abstention, per-class precision/recall inputs and confusion matrices, plus SHA-256 and row counts of every input file.
+With the team's layout (ids such as `dev_dia0_utt0`), once the files are in the repository:
+
+```bash
+python -m fusion.experiments.evaluate_real --data DIR --strip-split-prefix --config cfg.json \
+  --probs audio=features/fusion/speech_dev_probabilities.csv,features/fusion/speech_test_probabilities.csv \
+  --probs face=features/fusion/visual_dev_probabilities.csv,features/fusion/visual_test_probabilities.csv
+```
+
+(`DIR` holds `labels_dev.csv` / `labels_test.csv` and, until the text owner's file exists, a `probs_{dev,test}_text.csv`.)
 It has been run on real **text-only** outputs (reproduces the numbers above) and its mechanics are unit-tested on synthetic files; it has
 **not** been run on real multi-modal predictions because none exist yet. It cannot verify that the files really come from the stated models.
 
@@ -314,8 +323,8 @@ not changed, to avoid silently altering the integrated output.
 
 ## Known gaps
 
-1. **Real predictions are incomplete.** Speech outputs exist (see "First check on real predictions"); the face model has none and the text
-   owner's own probability file is not in the repository. Needed: all three on the same MELD dev and test `sample_id`s, trained on `train` only.
+1. **Real predictions are incomplete.** Speech outputs exist (see "First check on real predictions"); the face owner's probability files are not
+   yet in the repository (see item 4) and neither is the text owner's. Needed: all three on the same MELD dev and test `sample_id`s, trained on `train` only.
 2. **Text model:** `text_emotion/` now trains on MELD (7 classes; reported ~51 % accuracy). I reproduced that independently
    (text only) but no prediction file from the team's own run is in the repository, so it is not verified from their artifact.
    `text_emotion/predict.py` preprocesses text while `train.py` / `evaluate.py` use raw text, and the README still quotes an old
@@ -323,6 +332,10 @@ not changed, to avoid silently altering the integrated output.
 3. **Speech model:** the exported probabilities are close to the class prior (95 % of test utterances labelled neutral, macro-F1 0.13; 0.20 after
    the prior is divided out), so it adds little to text so far. Its training prior is inferred, not confirmed. The earlier syntax error in
    `mosei_data.py` was fixed by its owner.
-4. **Face model:** not in the repository yet.
+4. **Face model:** open pull request #1 (`facial_emotion/`, not merged). Reviewed from its code and README only: class-balanced logistic regression on
+   mean / standard deviation of MediaPipe landmark coordinates, scaler and classifier fitted on train only, reported test accuracy 20.0 % and macro-F1 0.177
+   (1,078 of 1,109 dev and 2,548 of 2,610 test utterances have a face; the rest are missing modality). The probability files it writes
+   (`visual_{dev,test}_probabilities.csv`) are saved to the owner's local drive and are **not in the pull request**, so no face result has been checked here.
+   The model would be declared `model_priors={"face": "uniform"}` (balanced weights).
 5. **Untested with all three modalities:** the comparisons above use text + speech only. The choice between linear and log pooling,
    `calibrate_fused`, reliability weighting under real noise, and the conflict flag with three modalities still need the face predictions.
