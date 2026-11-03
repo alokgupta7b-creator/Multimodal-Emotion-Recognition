@@ -137,3 +137,40 @@ class TestSelectThreshold:
             warnings.simplefilter("ignore")
             r = ReliabilityAwareFuser(cfg).fit(P, y).fuse_batch(P)
         assert 0.6 < (~r.uncertain).mean() < 0.95
+
+
+class TestConflictThreshold:
+    def test_informative_disagreement_is_accepted(self):
+        from fusion import select_conflict_threshold
+        rng = np.random.default_rng(0)
+        score = rng.uniform(0, 1, 4000)
+        ok = rng.uniform(size=4000) > 0.1 + 0.6 * score             # more disagreement, more errors
+        thr, info = select_conflict_threshold(score, ok, n_available=np.full(4000, 3), max_flag_rate=0.2)
+        assert thr is not None and info["informative"] and info["lift"] > 1.2 and info["z"] > 1.645
+        assert info["flag_rate"] <= 0.2 + 1e-9 and thr == info["threshold"]
+
+    def test_uninformative_disagreement_is_rejected(self):
+        from fusion import select_conflict_threshold
+        rng = np.random.default_rng(1)
+        score = rng.uniform(0, 1, 4000)
+        ok = rng.uniform(size=4000) > 0.4                          # errors independent of the score
+        thr, info = select_conflict_threshold(score, ok, max_flag_rate=0.2)
+        assert thr is None and not info["informative"] and "does not predict" in info["reason"]
+
+    def test_single_modality_rows_are_ignored_and_too_few_rows_is_not_a_decision(self):
+        from fusion import select_conflict_threshold
+        score, ok = np.linspace(0, 1, 100), np.zeros(100, dtype=bool)
+        thr, info = select_conflict_threshold(score, ok, n_available=np.ones(100, dtype=int))
+        assert thr is None and info["n_rows"] == 0 and "only 0 rows" in info["reason"]
+
+    def test_validation(self):
+        from fusion import select_conflict_threshold
+        with pytest.raises(FusionInputError):
+            select_conflict_threshold(np.zeros(5), np.zeros(4, dtype=bool))
+        with pytest.raises(FusionInputError):
+            select_conflict_threshold(np.zeros(5), np.zeros(5, dtype=bool), max_flag_rate=1.0)
+
+    def test_out_of_fold_returns_score_and_counts(self):
+        P, y, g = _data()
+        oof = out_of_fold_confidence(FusionConfig(), P, y, g, 4, 0)
+        assert oof["conflict_score"].shape == (len(y),) and (oof["n_available"] == 2).all()
