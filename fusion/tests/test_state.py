@@ -46,7 +46,7 @@ def test_round_trip_gives_identical_outputs(cfg, tmp_path):
     f.save(path)
     g = ReliabilityAwareFuser.load(path)
     assert g.config == f.config and g.fitted and g.temperatures == f.temperatures and g.priors == f.priors
-    assert g.fused_temperature == f.fused_temperature
+    assert g.fused_temperatures == f.fused_temperatures
     a, b = f.fuse_batch(P), g.fuse_batch(P)
     np.testing.assert_array_equal(a.probs, b.probs)
     np.testing.assert_array_equal(a.pred, b.pred)
@@ -73,7 +73,9 @@ def test_unfitted_round_trip_stays_unfitted():
     (lambda s: s["temperatures"].update(text=-1.0), "finite"),
     (lambda s: s["temperatures"].pop("face"), "exactly the modalities"),
     (lambda s: s["priors"].update(audio=0.0), "> 0"),
-    (lambda s: s.update(fused_temperature="hot"), "fused_temperature"),
+    (lambda s: s.update(fused_temperatures={"text": "hot"}), "fused_temperatures"),
+    (lambda s: s.update(fused_temperatures={"voice": 1.0}), "unknown patterns"),
+    (lambda s: s.update(fused_temperatures=[1.0]), "must be a dict"),
     (lambda s: s.update(dev_prior=[0.5, 0.5]), "needs 7"),
     (lambda s: s.update(dev_prior=[0.1] * 7), "sum to 1"),
 ])

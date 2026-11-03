@@ -349,3 +349,46 @@ class TestFusedTemperature:
         with pytest.raises(FusionInputError):
             f.fit({"text": P["text"][:10]}, y)                    # row mismatch
         assert f.fused_temperature == T and f.temperatures == temps
+
+
+class TestFusedTemperaturePerAvailabilityPattern:
+    """The softening a pooled output needs depends on how many modalities were pooled."""
+
+    @staticmethod
+    def _fit(rho=0.8, seed=0):
+        P, y = TestFusedTemperature._corr(n=8000, seed=seed, rho=rho)
+        f = ReliabilityAwareFuser(FusionConfig(pooling="log", calibrate_fused=True)).fit(P, y)
+        return f, P, y
+
+    def test_one_temperature_per_non_empty_subset_and_they_differ(self):
+        f, _, _ = self._fit()
+        assert set(f.fused_temperatures) == {"text", "audio", "face", "text+audio", "text+face", "audio+face", "text+audio+face"}
+        assert f.fused_temperatures["text+audio+face"] > f.fused_temperatures["text"] + 0.3   # more pooled -> more softening
+
+    def test_missing_modality_rows_are_not_distorted_by_the_all_modality_temperature(self):
+        from fusion.calibration import nll
+        f, P, y = self._fit()
+        base = ReliabilityAwareFuser(FusionConfig(pooling="log")).fit(P, y)
+        only_text = {"text": P["text"], "audio": None, "face": None}
+        ok = np.isfinite(f.fuse_batch(only_text).probs).all(1)
+        a, b = f.fuse_batch(only_text).probs[ok], base.fuse_batch(only_text).probs[ok]
+        # a single model is already calibrated by its own temperature: the per-pattern fused T must stay close to 1 there
+        assert abs(f.fused_temperatures["text"] - 1.0) < 0.15
+        assert nll(a, y[ok]) <= nll(b, y[ok]) + 0.02
+
+    def test_one_batch_can_mix_patterns_and_each_row_uses_its_own_temperature(self):
+        f, P, y = self._fit()
+        Q = {m: p[:6].copy() for m, p in P.items()}
+        Q["audio"][3:] = np.nan                                  # rows 3-5: audio missing
+        Q["face"][4:] = np.nan                                   # rows 4-5: face missing too
+        r = f.fuse_batch(Q)
+        for i, sub in ((0, {"text", "audio", "face"}), (3, {"text", "face"}), (5, {"text"})):
+            single = f.fuse({m: (Q[m][i] if m in sub else None) for m in Q})
+            np.testing.assert_allclose(single.probs, r.probs[i], atol=1e-12)
+
+    def test_unseen_pattern_falls_back_to_one(self):
+        f, P, y = self._fit()
+        f.fused_temperatures.pop("text+face")
+        base = ReliabilityAwareFuser(FusionConfig(pooling="log")).fit(P, y)
+        sub = {"text": P["text"][:20], "audio": None, "face": P["face"][:20]}
+        np.testing.assert_allclose(f.fuse_batch(sub).probs, base.fuse_batch(sub).probs, atol=1e-12)

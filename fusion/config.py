@@ -65,12 +65,14 @@ class FusionConfig:
         "only the evidence log p - log pi_m is scaled by 1/T, and T is fitted against the dev class prior.")
     calibrate_fused: bool = _f(
         False, "evidence",
-        "Fit one extra temperature on the FUSED dev output (after pooling) and apply it to every fused output. "
-        "Argmax is unchanged; only confidence changes. Calibrating each model separately does not make the pooled "
-        "probabilities calibrated when modality errors are correlated: in simulation with shared noise (rho=0.6) "
-        "log-pooled NLL was 1.29 vs 1.09 for linear, and the fused temperature recovers most of that "
-        "(see results/correlated_errors.json). One temperature is fitted on all-modalities-present dev rows, so it "
-        "is only approximately right when modalities are missing at run time. Needs fit().")
+        "Fit one extra temperature on the FUSED dev output (after pooling), separately for each availability pattern "
+        "(which modalities were used for a sample; dev data has all of them, so each pattern is fitted by pooling only that "
+        "subset), and soften each fused output with the temperature of its own pattern. Argmax is unchanged; only confidence "
+        "changes. Per-model calibration does not calibrate the pooled output when errors are correlated: simulated NLL 1.29 "
+        "(log) vs 1.09 (linear) at rho=0.6; real MELD text+speech+face, test NLL/ECE 1.584/0.268 -> 1.343/0.042 (linear, "
+        "uniform target) and 1.277/0.087 -> 1.214/0.072 (log, dev target). A single temperature fitted with all modalities "
+        "present hurt missing-modality cases on real data (text alone NLL 1.366 -> 1.700), hence one per pattern. Off by "
+        "default only to leave the integrated confidence unchanged; recommended when fusing 2+ modalities. Needs fit().")
     pooling: str = _f(
         "linear", "assumption",
         "'linear' = weighted mean of probabilities (project-brief formula). 'log' = weighted product "

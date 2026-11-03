@@ -28,6 +28,7 @@ class (e.g. the text model, which has no ``neutral``/``disgust``).
 """
 from __future__ import annotations
 
+import itertools
 import json as _json
 import math as _math
 import warnings as _warnings
@@ -278,7 +279,19 @@ class ReliabilityAwareFuser:
         tp = config.target_prior
         self._prior_aware_cal = self._has_model_prior or not (isinstance(tp, str) and tp == "uniform")
         self._dev_prior: Optional[np.ndarray] = None      # set by fit(); used by target_prior="dev"
-        self.fused_temperature = 1.0                      # set by fit() when calibrate_fused is on
+        self.fused_temperatures: Dict[str, float] = {}    # availability pattern -> temperature; set by fit() if calibrate_fused
+
+    # ------------------------------------------------------------ fused calibration
+    def _pattern_key(self, mods) -> str:
+        """Availability pattern as text, modalities in configuration order: 'text+audio'."""
+        return "+".join(m for m in self.config.modalities if m in mods)
+
+    @property
+    def fused_temperature(self) -> float:
+        """Fused temperature for the pattern with the most modalities (all present); 1.0 if none was fitted."""
+        if not self.fused_temperatures:
+            return 1.0
+        return self.fused_temperatures[max(self.fused_temperatures, key=lambda k: (k.count("+"), k))]
 
     # ------------------------------------------------------------ class priors
     def _target_log_prior(self) -> Optional[np.ndarray]:
@@ -327,7 +340,7 @@ class ReliabilityAwareFuser:
             "fitted": bool(self.fitted),
             "temperatures": {m: float(t) for m, t in self.temperatures.items()},
             "priors": {m: float(p) for m, p in self.priors.items()},
-            "fused_temperature": float(self.fused_temperature),
+            "fused_temperatures": {k: float(v) for k, v in self.fused_temperatures.items()},
             "dev_prior": None if self._dev_prior is None else [float(x) for x in self._dev_prior],
             "fit_report": _json.loads(_json.dumps(self.fit_report, default=float)),
         }
@@ -337,7 +350,7 @@ class ReliabilityAwareFuser:
         """Inverse of ``state_dict``. Raises ``FusionInputError`` on a malformed or inconsistent state."""
         if not isinstance(state, Mapping):
             raise FusionInputError("state must be a dict produced by state_dict()")
-        missing = {"version", "config", "fitted", "temperatures", "priors", "fused_temperature", "dev_prior"} - set(state)
+        missing = {"version", "config", "fitted", "temperatures", "priors", "fused_temperatures", "dev_prior"} - set(state)
         if missing:
             raise FusionInputError(f"state is missing keys {sorted(missing)}")
         if state["version"] != cls._STATE_VERSION:
@@ -355,7 +368,13 @@ class ReliabilityAwareFuser:
                 raise FusionInputError(f"state {key} must name exactly the modalities {mods}, got {sorted(state[key])}")
         temps = {m: positive(f"temperatures[{m!r}]", state["temperatures"][m]) for m in mods}
         pri = {m: positive(f"priors[{m!r}]", state["priors"][m]) for m in mods}
-        ft = positive("fused_temperature", state["fused_temperature"])
+        if not isinstance(state["fused_temperatures"], Mapping):
+            raise FusionInputError("state fused_temperatures must be a dict {pattern: temperature}")
+        valid_keys = {f._pattern_key(sub) for r_ in range(1, len(mods) + 1) for sub in itertools.combinations(mods, r_)}
+        bad = sorted(set(state["fused_temperatures"]) - valid_keys)
+        if bad:
+            raise FusionInputError(f"state fused_temperatures has unknown patterns {bad}; valid: {sorted(valid_keys)}")
+        ft = {k: positive(f"fused_temperatures[{k!r}]", v) for k, v in state["fused_temperatures"].items()}
         dp = state["dev_prior"]
         if dp is not None:
             if len(dp) != K:
@@ -363,7 +382,7 @@ class ReliabilityAwareFuser:
             dp = np.array([positive("dev_prior value", v) for v in dp])
             if abs(dp.sum() - 1.0) > 1e-6:
                 raise FusionInputError("state dev_prior must sum to 1")
-        f.temperatures, f.priors, f.fused_temperature, f._dev_prior = temps, pri, ft, dp
+        f.temperatures, f.priors, f.fused_temperatures, f._dev_prior = temps, pri, ft, dp
         f.fit_report = dict(state.get("fit_report") or {})
         f.fitted = bool(state["fitted"])
         return f
@@ -465,37 +484,52 @@ class ReliabilityAwareFuser:
             mean = float(np.mean(list(f1s.values())))
             for name, f in f1s.items():
                 priors[name] = f / mean
-        old = (self._dev_prior, self.temperatures, self.priors, self.fit_report, self.fitted, self.fused_temperature)
+        old = (self._dev_prior, self.temperatures, self.priors, self.fit_report, self.fitted, self.fused_temperatures)
         self._dev_prior = dev_prior
         self.temperatures, self.priors = temps, priors
         self.fit_report = report
         self.fitted = True
-        self.fused_temperature = 1.0
+        self.fused_temperatures = {}
         if cfg.calibrate_fused:
             try:
-                self.fused_temperature = self._fit_fused_temperature(dev_probs, y)
+                self.fused_temperatures = self._fit_fused_temperatures(dev_probs, y)
             except Exception:                              # a failed fit leaves the fuser as it was
                 (self._dev_prior, self.temperatures, self.priors, self.fit_report, self.fitted,
-                 self.fused_temperature) = old
+                 self.fused_temperatures) = old
                 raise
         return self
 
-    def _fit_fused_temperature(self, dev_probs, y) -> float:
-        """Temperature of the pooled output on the dev rows where at least one modality is usable."""
-        got = {m: p for m, p in dev_probs.items() if p is not None}
-        with _warnings.catch_warnings():
-            _warnings.simplefilter("ignore")
-            r = self.fuse_batch(got)
-        use = (r.pred >= 0) & np.isfinite(r.probs).all(axis=1)
-        if int(use.sum()) < self.config.min_fit_samples:
-            _warnings.warn(f"calibrate_fused: only {int(use.sum())} usable dev rows (< min_fit_samples="
-                           f"{self.config.min_fit_samples}); fused temperature stays at 1.0", UserWarning, stacklevel=3)
-            return 1.0
-        T = fit_temperature(r.probs[use], y[use])
-        if temperature_at_bound(T):
-            _warnings.warn(f"calibrate_fused: fitted temperature {T:.3g} is at the search bound; not trustworthy",
-                           UserWarning, stacklevel=3)
-        return float(T)
+    def _fit_fused_temperatures(self, dev_probs, y) -> Dict[str, float]:
+        """One temperature of the pooled output per availability pattern (the set of modalities used for a sample).
+
+        The right softening of a pooled output depends on how many modalities were pooled (three correlated models
+        over-state their agreement, one model does not), so a single temperature fitted with everything present hurts
+        when a modality is missing. Dev data has all modalities, so each pattern is fitted by pooling only that subset
+        (the others set to None), on the rows whose actual availability equals the pattern. Nothing is invented."""
+        got = {m: np.asarray(p, dtype=float) for m, p in dev_probs.items() if p is not None and m in self.config.modalities}
+        names = [m for m in self.config.modalities if m in got]
+        out: Dict[str, float] = {}
+        for r_ in range(1, len(names) + 1):
+            for sub in itertools.combinations(names, r_):
+                key = self._pattern_key(sub)
+                with _warnings.catch_warnings():
+                    _warnings.simplefilter("ignore")
+                    r = self.fuse_batch({m: (got[m] if m in sub else None) for m in got})   # identity: no temperatures yet
+                pat = np.array([self._pattern_key([m for m, a in zip(self.config.modalities, col) if a]) == key
+                                for col in r.available.T])
+                use = pat & (r.pred >= 0) & np.isfinite(r.probs).all(axis=1)
+                if int(use.sum()) < self.config.min_fit_samples:
+                    _warnings.warn(f"calibrate_fused [{key}]: only {int(use.sum())} usable dev rows "
+                                   f"(< min_fit_samples={self.config.min_fit_samples}); temperature stays at 1.0",
+                                   UserWarning, stacklevel=3)
+                    out[key] = 1.0
+                    continue
+                T = float(fit_temperature(r.probs[use], y[use]))
+                if temperature_at_bound(T):
+                    _warnings.warn(f"calibrate_fused [{key}]: fitted temperature {T:.3g} is at the search bound; "
+                                   "not trustworthy", UserWarning, stacklevel=3)
+                out[key] = T
+        return out
 
     # ------------------------------------------------------------ batch core
     def fuse_batch(
@@ -659,11 +693,15 @@ class ReliabilityAwareFuser:
 
         none = n_avail == 0
         fused[none] = np.nan            # no modality, no prediction: do not invent a distribution
-        if cfg.calibrate_fused and self.fused_temperature != 1.0:
-            lg = np.log(np.clip(fused, _EPS, 1.0)) / self.fused_temperature        # NaN stays NaN (unsupported / none)
-            lg = lg - np.nanmax(np.where(np.isnan(lg), -np.inf, lg), axis=1, keepdims=True).clip(min=-1e300)
-            e = np.exp(lg)
-            fused = e / np.nansum(e, axis=1, keepdims=True)
+        if cfg.calibrate_fused and self.fused_temperatures:
+            # Each sample is softened with the temperature fitted for ITS availability pattern (1.0 if that pattern was never fitted).
+            T_row = np.array([self.fused_temperatures.get(
+                self._pattern_key([m for m, a in zip(mods, col) if a]), 1.0) for col in avail.T])
+            if (T_row != 1.0).any():
+                lg = np.log(np.clip(fused, _EPS, 1.0)) / T_row[:, None]          # NaN stays NaN (unsupported / none)
+                lg = lg - np.nanmax(np.where(np.isnan(lg), -np.inf, lg), axis=1, keepdims=True).clip(min=-1e300)
+                e = np.exp(lg)
+                fused = e / np.nansum(e, axis=1, keepdims=True)
         partial_only = partial_only & ~none
 
         # ---- conflict -----------------------------------------------------------------------
