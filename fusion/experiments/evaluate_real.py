@@ -70,8 +70,11 @@ def read_labels(path: Path) -> Tuple[List[str], np.ndarray, np.ndarray]:
     return ids, y, np.array([r["dialogue_id"] for r in rows])
 
 
-def read_probs(path: Path, ids: List[str]) -> np.ndarray:
-    """(N, K) in MELD_LABELS order, aligned to ``ids``; NaN rows for ids the file does not contain."""
+def read_probs(path: Path, ids: List[str], strip_prefix: Optional[str] = None) -> np.ndarray:
+    """(N, K) in MELD_LABELS order, aligned to ``ids``; NaN rows for ids the file does not contain.
+
+    ``strip_prefix`` (e.g. ``"dev_"``) is removed from the start of each file sample_id before matching, for files whose ids
+    carry a split prefix (``dev_dia0_utt0``). An id that does not start with it is left as it is (and so fails the match)."""
     with open(path, newline="", encoding="utf-8") as fh:
         reader = csv.DictReader(fh)
         cols = reader.fieldnames or []
@@ -86,6 +89,8 @@ def read_probs(path: Path, ids: List[str]) -> np.ndarray:
         seen = set()
         for ln, r in enumerate(reader, start=2):
             sid = r["sample_id"]
+            if strip_prefix and sid.startswith(strip_prefix):
+                sid = sid[len(strip_prefix):]
             if sid not in pos:
                 raise FusionInputError(f"{path.name} line {ln}: sample_id {sid!r} is not in the labels file")
             if sid in seen:
@@ -130,6 +135,21 @@ def candidates(base: FusionConfig) -> Dict[str, FusionConfig]:
     return out
 
 
+def paired_bootstrap(y, g, pred_a, pred_b, n_boot=1000, seed=0):
+    """Fused-minus-single differences in accuracy and macro-F1 with 95 % intervals, resampling whole DIALOGUES
+    (utterances of one dialogue are not independent). Rows without a prediction (-1) count as wrong for that side."""
+    rng = np.random.default_rng(seed)
+    groups = np.unique(g)
+    rows_of = {k: np.flatnonzero(g == k) for k in groups}
+    da, df = [], []
+    for _ in range(n_boot):
+        r = np.concatenate([rows_of[k] for k in rng.choice(groups, len(groups))])
+        da.append(accuracy(y[r], pred_a[r]) - accuracy(y[r], pred_b[r]))
+        df.append(macro_f1(y[r], pred_a[r], K) - macro_f1(y[r], pred_b[r], K))
+    ci = lambda a: {"mean": float(np.mean(a)), "lo95": float(np.percentile(a, 2.5)), "hi95": float(np.percentile(a, 97.5))}
+    return {"accuracy": ci(da), "macro_f1": ci(df), "n_boot": n_boot}
+
+
 def fit_fuse(cfg, dev, y_dev, test, subset=None):
     f = ReliabilityAwareFuser(cfg)
     with warnings.catch_warnings(record=True) as w:
@@ -140,8 +160,15 @@ def fit_fuse(cfg, dev, y_dev, test, subset=None):
 
 
 # ----------------------------------------------------------------------------- main
-def evaluate(data_dir: Path, config: Optional[dict] = None, seed: int = 0) -> dict:
+def evaluate(data_dir: Path, config: Optional[dict] = None, seed: int = 0,
+             probs_files: Optional[Dict[str, Tuple[Path, Path]]] = None, strip_split_prefix: bool = False) -> dict:
+    """``probs_files`` maps a modality to ``(dev_csv, test_csv)`` paths that replace the default
+    ``probs_<split>_<modality>.csv`` in ``data_dir``; ``strip_split_prefix`` removes ``dev_`` / ``test_`` from file sample ids."""
     data_dir = Path(data_dir)
+    probs_files = {m: (Path(a), Path(b)) for m, (a, b) in (probs_files or {}).items()}
+    unknown = sorted(set(probs_files) - set(MODALITIES))
+    if unknown:
+        raise FusionInputError(f"unknown modality {unknown}; expected one of {list(MODALITIES)}")
     files, prov = {}, {}
     for split in ("dev", "test"):
         p = data_dir / f"labels_{split}.csv"
@@ -150,18 +177,19 @@ def evaluate(data_dir: Path, config: Optional[dict] = None, seed: int = 0) -> di
         files[split] = read_labels(p)
         prov[p.name] = {"sha256": _sha(p), "rows": len(files[split][0])}
     dev_ids, y_dev, g_dev = files["dev"]
-    te_ids, y_te, _ = files["test"]
+    te_ids, y_te, g_te = files["test"]
     mods = []
     dev_p: Dict[str, np.ndarray] = {}
     te_p: Dict[str, np.ndarray] = {}
     for m in MODALITIES:
-        pd_, pt_ = data_dir / f"probs_dev_{m}.csv", data_dir / f"probs_test_{m}.csv"
+        pd_, pt_ = probs_files.get(m, (data_dir / f"probs_dev_{m}.csv", data_dir / f"probs_test_{m}.csv"))
         if pd_.exists() != pt_.exists():
             raise FusionInputError(f"modality {m!r}: needs both {pd_.name} and {pt_.name} (found only one)")
         if not pd_.exists():
             continue
         mods.append(m)
-        dev_p[m], te_p[m] = read_probs(pd_, dev_ids), read_probs(pt_, te_ids)
+        dev_p[m] = read_probs(pd_, dev_ids, "dev_" if strip_split_prefix else None)
+        te_p[m] = read_probs(pt_, te_ids, "test_" if strip_split_prefix else None)
         for p, arr in ((pd_, dev_p[m]), (pt_, te_p[m])):
             prov[p.name] = {"sha256": _sha(p), "rows_with_predictions": int(np.isfinite(arr).any(axis=1).sum())}
     if not mods:
@@ -216,6 +244,13 @@ def evaluate(data_dir: Path, config: Optional[dict] = None, seed: int = 0) -> di
             per_subset["+".join(sub)] = report(y_te, rr.probs)
     res["selected_test"]["modality_subsets_used_at_test"] = per_subset
 
+    if len(mods) > 1:                       # does fusing beat each model alone, under the SAME configuration?
+        pf = full.pred
+        boot = {}
+        for m in mods:
+            _, rm, _ = fit_fuse(cfg, dev_p, y_dev, te_p, subset={m})
+            boot[m] = paired_bootstrap(y_te, g_te, pf, rm.pred, seed=seed)
+        res["selected_test"]["fused_minus_single_modality_paired_bootstrap"] = boot
     oof = out_of_fold_confidence(cfg, dev_p, y_dev, g_dev, n_folds=folds, seed=seed)
     usable = oof["pred"] >= 0
     ab = {}
@@ -250,6 +285,10 @@ def _print(res: dict) -> None:
     print("\nselected configuration, by modalities used at test time:")
     for k, d in res["selected_test"]["modality_subsets_used_at_test"].items():
         row(f"  {k}", d)
+    for m, b in res["selected_test"].get("fused_minus_single_modality_paired_bootstrap", {}).items():
+        a_, f_ = b["accuracy"], b["macro_f1"]
+        print(f"fused minus {m} alone (same config, dialogue bootstrap): accuracy {a_['mean']:+.3f} [{a_['lo95']:+.3f}, {a_['hi95']:+.3f}], "
+              f"macro-F1 {f_['mean']:+.3f} [{f_['lo95']:+.3f}, {f_['hi95']:+.3f}]")
     ab = res["selected_test"]["abstention"]
     if ab:
         print(f"\nabstention (threshold {ab['threshold_from_dev_oof']:.3f} from dev out-of-fold, target coverage 0.8): test coverage "
@@ -263,10 +302,22 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--data", required=True, type=Path)
     ap.add_argument("--config", type=Path, help="JSON dict of FusionConfig options")
+    ap.add_argument("--probs", action="append", default=[], metavar="MODALITY=DEV_CSV,TEST_CSV",
+                    help="use these files for a modality instead of probs_<split>_<modality>.csv in --data (repeatable)")
+    ap.add_argument("--strip-split-prefix", action="store_true",
+                    help="drop a leading 'dev_' / 'test_' from sample ids in the probability files")
     ap.add_argument("--out", type=Path, default=Path("fusion/results/real_eval.json"))
     a = ap.parse_args(argv)
     try:
-        res = evaluate(a.data, json.loads(a.config.read_text()) if a.config else None)
+        pf = {}
+        for spec in a.probs:
+            if "=" not in spec or "," not in spec.split("=", 1)[1]:
+                raise FusionInputError(f"--probs {spec!r}: expected MODALITY=DEV_CSV,TEST_CSV")
+            m, paths = spec.split("=", 1)
+            d, t = paths.split(",", 1)
+            pf[m] = (Path(d), Path(t))
+        res = evaluate(a.data, json.loads(a.config.read_text()) if a.config else None, probs_files=pf,
+                       strip_split_prefix=a.strip_split_prefix)
     except (FusionInputError, ValueError) as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
