@@ -243,3 +243,57 @@ class TestMeldTextAdapter:
             meld_text_probs_from_model(self._Model(["anger", "fear", "joy", "sadness", "surprise"]), ["a"])
         with pytest.raises(ValueError, match="MELD"):
             meld_text_probs_from_model(self._Model(["love", "anger", "disgust", "fear", "joy", "neutral", "sadness"]), ["a"])
+
+
+class TestPriorAwareCalibration:
+    """Temperature scales the evidence only; fitting is done against the dev class prior."""
+
+    @staticmethod
+    def _gauss(n, prior_true, prior_model, seed=1, sigma=1.5):
+        rng = np.random.default_rng(seed)
+        mu = rng.normal(size=(K, 4))
+        y = rng.choice(K, size=n, p=prior_true)
+        x = mu[y] + sigma * rng.normal(size=(n, 4))
+        ll = -((x[:, None, :] - mu[None]) ** 2).sum(-1) / (2 * sigma ** 2)
+        z = ll + np.log(prior_model)
+        z -= z.max(1, keepdims=True)
+        P = np.exp(z)
+        return P / P.sum(1, keepdims=True), y
+
+    def test_prior_survives_temperature_and_division_leaves_scaled_evidence(self):
+        from fusion.calibration import apply_temperature
+        rng = np.random.default_rng(0)
+        pi = _norm(rng.dirichlet(np.ones(K)))
+        P = rng.dirichlet(np.ones(K), size=5)
+        T = 1.7
+        cal = apply_temperature(P, T, np.log(pi))
+        z = (np.log(P) - np.log(pi)) / T
+        np.testing.assert_allclose(np.log(cal) - np.log(pi) - (np.log(cal) - np.log(pi)).max(1, keepdims=True),
+                                   z - z.max(1, keepdims=True), atol=1e-10)
+        np.testing.assert_allclose(apply_temperature(P, T), apply_temperature(P, T, None))   # default unchanged
+
+    def test_exact_posteriors_recover_T_equal_one_despite_prior_shift(self):
+        from fusion.calibration import fit_temperature
+        dev_prior = _norm([1, 1, 1, 1, 9, 1, 1])
+        P, y = self._gauss(20000, dev_prior, np.full(K, 1.0 / K))        # "balanced" model, skewed dev labels
+        aware = fit_temperature(P, y, np.log(np.full(K, 1.0 / K)), np.log(dev_prior))
+        plain = fit_temperature(P, y)
+        assert abs(aware - 1.0) < 0.06, aware                               # exact evidence needs no rescaling
+        assert abs(plain - 1.0) > 0.1, plain                                # the confound this removes
+
+    def test_fuser_fit_uses_it_only_when_priors_are_configured(self):
+        dev_prior = _norm([1, 1, 1, 1, 9, 1, 1])
+        P, y = self._gauss(20000, dev_prior, np.full(K, 1.0 / K))
+        plain = ReliabilityAwareFuser(FusionConfig()).fit({"text": P}, y).temperatures["text"]
+        aware = ReliabilityAwareFuser(FusionConfig(target_prior="dev")).fit({"text": P}, y).temperatures["text"]
+        assert abs(aware - 1.0) < 0.06 < abs(plain - 1.0)
+
+    def test_declared_prior_is_used_in_calibration(self):
+        """Unweighted model (prior pi) on dev drawn from pi: exact posteriors, T ~ 1, and fuse() output is Bayes."""
+        pi = _norm([1, 1, 1, 1, 9, 1, 1])
+        P, y = self._gauss(20000, pi, pi)
+        f = ReliabilityAwareFuser(FusionConfig(pooling="log", model_priors={"text": pi}, target_prior=pi))
+        f.fit({"text": P}, y)
+        assert abs(f.temperatures["text"] - 1.0) < 0.06
+        out = f.fuse_batch({"text": P[:50]}).probs
+        np.testing.assert_allclose(out, P[:50], atol=0.03)               # T ~ 1, same prior in and out

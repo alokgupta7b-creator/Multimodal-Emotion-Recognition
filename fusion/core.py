@@ -271,6 +271,10 @@ class ReliabilityAwareFuser:
                 lp[i] = np.log(np.asarray(v, dtype=float))
                 self._has_model_prior = True
         self._log_model_prior = lp
+        # Prior-aware calibration (scale the evidence only, fit against the dev class prior) is used once the
+        # user has opted into prior handling; otherwise calibration is exactly the original softmax(log p / T).
+        tp = config.target_prior
+        self._prior_aware_cal = self._has_model_prior or not (isinstance(tp, str) and tp == "uniform")
         self._dev_prior: Optional[np.ndarray] = None      # set by fit(); used by target_prior="dev"
 
     # ------------------------------------------------------------ class priors
@@ -333,6 +337,8 @@ class ReliabilityAwareFuser:
             raise FusionInputError(f"unknown modalities {sorted(unknown)}; expected {list(cfg.modalities)}")
         y = _as_label_indices(y_dev, cfg.labels)
         report, f1s = {}, {}
+        # Dev class frequencies (Laplace-smoothed so no class has prior 0), over ALL dev rows.
+        dev_prior = (np.bincount(y, minlength=K) + 1.0) / (len(y) + K)
         # Built from scratch and assigned only at the end: a re-fit never keeps state from an
         # earlier fit, and a fit that raises leaves the fuser exactly as it was.
         temps = {m: 1.0 for m in cfg.modalities}
@@ -365,7 +371,12 @@ class ReliabilityAwareFuser:
             pos = {c: i for i, c in enumerate(cols)}
             Pv = clean[use][:, cols]
             yv = np.array([pos[c] for c in y[use]])
-            T = fit_temperature(Pv, yv) if cfg.use_calibration else 1.0
+            if not cfg.use_calibration:
+                T = 1.0
+            elif self._prior_aware_cal and not self._is_partial[cfg.modalities.index(name)]:
+                T = fit_temperature(Pv, yv, self._log_model_prior[cfg.modalities.index(name)], np.log(dev_prior))
+            else:
+                T = fit_temperature(Pv, yv)
             temps[name] = T
             at_bound = bool(cfg.use_calibration and temperature_at_bound(T))
             if at_bound:
@@ -382,8 +393,7 @@ class ReliabilityAwareFuser:
             mean = float(np.mean(list(f1s.values())))
             for name, f in f1s.items():
                 priors[name] = f / mean
-        # Dev class frequencies (Laplace-smoothed so no class has prior 0), over ALL dev rows.
-        self._dev_prior = (np.bincount(y, minlength=K) + 1.0) / (len(y) + K)
+        self._dev_prior = dev_prior
         self.temperatures, self.priors = temps, priors
         self.fit_report = report
         self.fitted = True
@@ -450,7 +460,7 @@ class ReliabilityAwareFuser:
                 if self._is_partial[i]:
                     P[i] = apply_temperature_masked(P[i], T, self._support[name])
                 else:
-                    P[i] = apply_temperature(P[i], T)
+                    P[i] = apply_temperature(P[i], T, self._log_model_prior[i] if self._prior_aware_cal else None)
 
         # ---- pairwise agreement, compared on the classes both models can predict ------------
         floor = cfg.weight_floor

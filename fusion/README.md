@@ -92,6 +92,14 @@ The target prior is a **trade-off, not a free gain**. On the real MELD text mode
 `text_emotion/train.py`, text only, T fitted on dev, scored on test): uniform target accuracy 0.516 / macro-F1 0.378; dev class
 frequencies 0.597 / 0.347; alpha = 0.5 gives 0.582 / 0.379. Pick it by the metric the project reports, on dev data only.
 
+**Calibration under priors.** Scaling `log p` by 1/T also scales the prior term, which a later prior division cannot undo, and a
+temperature fitted on natural-prior dev data absorbs the shift between a balanced model's training prior and the dev prior. When any prior
+option is set, calibration therefore scales only the evidence (`log p - log pi_m`) and fits T against the dev class prior; with defaults
+it is the original `softmax(log p / T)`. Real text-only outputs (independent reproduction, dev-fitted, test-scored, dev-frequency target):
+balanced model ECE 0.035 -> 0.018, NLL 1.223 -> 1.213; unweighted model (declared training prior) ECE 0.068 -> 0.043, NLL 1.201 -> 1.194.
+Accuracy is unchanged (0.595 -> 0.596, 0.600 -> 0.597) and macro-F1 moves by about 0.014 (0.347 -> 0.333, 0.350 -> 0.353), so this is a calibration
+fix, not an accuracy gain. Whether it helps the fused output is untested until real audio and face predictions exist.
+
 Simulated check (`prior_correction.py`, exact posteriors, macro-F1, all three modalities present, test labels at MELD frequencies):
 
 | models trained with | no correction (before) | declared, uniform target | declared, natural target | declared wrongly |
@@ -120,7 +128,7 @@ choice with no supporting measurement, `engineering` = numerical safeguard. Noth
 | `modality_support` | `{}` (all classes) | engineering | Per-modality list of the classes the model can actually predict. Modalities not listed support all classes. Columns outside the support are ignored, never read as 0. See fusion/DESIGN_partial_support.md. |
 | `model_priors` | `{}` | assumption | Per-modality class prior that the model's probabilities ASSUME (the prior of its training distribution): 'uniform' (default) or one positive number per label, in label order. class_weight='balanced' training -> uniform; unweighted training -> the training class frequencies. It is divided out before pooling so a prior is not counted once per model (Bayes: P(c|x_1..x_M) ~ pi_t(c) * prod_m p_m(c|x_m) / pi_m(c)). Declared by the model owner, never estimated here; a wrong declaration makes results worse, not better. Partial-support modalities must stay 'uniform'. |
 | `target_prior` | `'uniform'` | assumption | Class prior of the FUSED output, applied exactly once: 'uniform' (default: no prior imposed; suits macro-F1 / balanced accuracy), 'dev' (class frequencies of the y_dev given to fit(), Laplace-smoothed; suits accuracy) or an explicit vector. This is a real accuracy / macro-F1 trade-off, not a free gain: on the real MELD text model alone (independent reproduction, text only) moving uniform -> dev frequencies raised test accuracy 0.516 -> 0.597 and lowered test macro-F1 0.378 -> 0.347. |
-| `target_prior_power` | `1.0` | assumption | Exponent alpha in [0, 1] applied to a non-uniform target prior (pi_t ~ pi^alpha): 0 = uniform, 1 = as given. Interpolates between the two objectives (text-only check on real MELD outputs: alpha=0.5 gave test accuracy 0.582 / macro-F1 0.379 vs 0.516 / 0.378 for uniform). Choose it on dev data only. Ignored when target_prior is 'uniform'. |
+| `target_prior_power` | `1.0` | assumption | Exponent alpha in [0, 1] applied to a non-uniform target prior (pi_t ~ pi^alpha): 0 = uniform, 1 = as given. Interpolates between the two objectives (text-only check on real MELD outputs: alpha=0.5 gave test accuracy 0.582 / macro-F1 0.379 vs 0.516 / 0.378 for uniform). Choose it on dev data only. Ignored when target_prior is 'uniform'. Setting any prior option also switches calibration to the prior-aware form: only the evidence log p - log pi_m is scaled by 1/T, and T is fitted against the dev class prior. |
 | `pooling` | `'linear'` | assumption | 'linear' = weighted mean of probabilities (project-brief formula). 'log' = weighted product of experts. Log scored higher on SIMULATED data (+0.023 mean macro-F1, better in 8 of 9 scenarios, never worse), but that simulation assumes independent errors, which favours log by construction; choose after correlated-error and real-dev results. |
 | `use_calibration` | `True` | evidence | Temperature-scale each modality (fit on dev data only; needs fit(), an un-fitted fuser warns once and applies nothing). Switching it off cost 0.038 macro-F1 on average in the simulation (worse in 8 of 9 scenarios) -- but the simulated models are over-confident by construction, so real-data benefit is unverified. |
 | `use_priors` | `False` | evidence | Multiply weights by each modality's dev macro-F1. Simulated: -0.004 mean macro-F1 with linear pooling (worse in 5 of 9 scenarios, best case +0.003) and -0.002 with log. F1 values from different class subsets are also not directly comparable. Revisit in the prior-correction stage. |
@@ -197,5 +205,5 @@ Honest reading:
 3. **Speech model:** reported MELD test accuracy 23.2 % (macro-F1 0.19). The repo's `speech_emotion/training/mosei_data.py`
    currently has a stray markdown fence on line 7 (a `SyntaxError`) that prevents importing the package; that file is not part of this module.
 4. **Face model:** not in the repository yet.
-5. **Open in this module:** calibration fitted on natural-prior dev data is confounded with prior shift for balanced models (fit it
-   under the target prior); correlated-error experiments; the conflict/abstention rule.
+5. **Open in this module:** correlated-error experiments; the conflict/abstention rule; calibration of the *fused* output (only single
+   models were checked on real data).

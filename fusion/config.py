@@ -61,7 +61,8 @@ class FusionConfig:
         "Exponent alpha in [0, 1] applied to a non-uniform target prior (pi_t ~ pi^alpha): 0 = uniform, 1 = "
         "as given. Interpolates between the two objectives (text-only check on real MELD outputs: alpha=0.5 "
         "gave test accuracy 0.582 / macro-F1 0.379 vs 0.516 / 0.378 for uniform). Choose it on dev data "
-        "only. Ignored when target_prior is 'uniform'.")
+        "only. Ignored when target_prior is 'uniform'. Setting any prior option also switches calibration to the prior-aware form: "
+        "only the evidence log p - log pi_m is scaled by 1/T, and T is fitted against the dev class prior.")
     pooling: str = _f(
         "linear", "assumption",
         "'linear' = weighted mean of probabilities (project-brief formula). 'log' = weighted product "
