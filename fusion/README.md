@@ -14,16 +14,16 @@ All probability vectors are over the **7 MELD classes in alphabetical order**:
 `speech_emotion.model.label_mapping.MELD_CLASS_NAMES`).
 
 ```python
-from fusion import (ReliabilityAwareFuser, text_support_config, from_text_probs, from_ser_prediction)
+from fusion import (FusionConfig, ReliabilityAwareFuser, meld_text_probs_from_model, from_ser_prediction)
 
-# The text model cannot predict neutral/disgust, so its support is declared (log pooling is the
-# recommended pooling for that case, see DESIGN_partial_support.md). Use ReliabilityAwareFuser() when
-# every modality predicts all 7 classes.
-fuser = ReliabilityAwareFuser(text_support_config())
+# Text model trained on MELD (text_emotion/train.py): all 7 classes, so no partial-support handling is needed.
+# Declare the class prior each model was trained with (class_weight="balanced" -> "uniform"; unweighted ->
+# its training class frequencies) so priors are not counted once per modality. See "Class priors" below.
+fuser = ReliabilityAwareFuser(FusionConfig(pooling="log", model_priors={"text": "uniform"}))
 fuser.fit({"text": P_text_dev, "audio": P_audio_dev, "face": P_face_dev}, y_dev)    # DEV split only, (N, 7) each
 
 result = fuser.fuse({
-    "text":  from_text_probs(text_probs_in_dair_order),              # NaN, not 0, at neutral/disgust
+    "text":  meld_text_probs_from_model(text_model, raw_utterances),   # (N, 7), RAW text, reordered by class name
     "audio": from_ser_prediction(ser_pred, quality=0.8),             # optional quality score in [0, 1]
     "face":  None,                                                   # unavailable: skipped, never "neutral"
 })
@@ -48,7 +48,9 @@ Contract:
 * **No invented probabilities.** A sample with no usable modality has `label=None` and all-NaN `probs`. For
   a modality with partial class support, columns outside its support are NaN (never 0) and are ignored.
 * `equal_weight_fusion(inputs)` is the reference baseline; `FusionConfig.equal_weight_baseline()` is its configuration.
-* Adapters: `from_ser_prediction(SERPrediction)`, `from_text_probs(probs)`, `text_probs_from_model(model, texts)`.
+* Adapters: `from_ser_prediction(SERPrediction)`; `meld_text_probs_from_model(model, texts)` for the MELD-trained text model
+  (reorders by class name, raises if any of the 7 classes is missing, never fills one in). `from_text_probs` and
+  `text_probs_from_model` are for the **older 6-class dair-ai/emotion text model** (NaN, not 0, at neutral/disgust) and are kept for it.
 
 ## Method
 
@@ -70,6 +72,40 @@ only redistributes probability *inside* its classes and never changes P(neutral)
 the alternatives that were rejected and what this gives up. Results also carry `conflict` and `uncertain` flags; the
 conflict rule is **provisional** (see below).
 
+## Class priors (log pooling is a product of posteriors)
+
+A model's posterior embeds the class prior of its training data: an unweighted logistic regression on MELD
+carries neutral ~ 47 %, while `class_weight="balanced"` approximates a uniform prior. For conditionally independent
+modalities Bayes gives
+
+    P(c | x_1..x_M)  ~  pi_target(c) * prod_m  p_m(c | x_m) / pi_m(c)
+
+so each model's own prior `pi_m` must be divided out and the target prior applied **once**. A plain product (the
+previous behaviour) is exact only when every `pi_m` is uniform; otherwise it counts a non-uniform prior once per
+available modality, so the implied prior changes with how many modalities are present (3 with face, 2 when it is missing).
+Configure it with `model_priors` (what each model assumes; declared by its owner, never estimated here),
+`target_prior` (`"uniform"`, `"dev"` or a vector) and `target_prior_power`. All defaults are uniform, which reproduces the
+earlier results exactly. In `linear` pooling each expert is converted `p * pi_t / pi_m` before averaging (exact for one expert; a
+mixture has no joint identity). A partial-support modality still never moves mass onto classes it cannot predict.
+
+The target prior is a **trade-off, not a free gain**. On the real MELD text model alone (my independent reproduction of
+`text_emotion/train.py`, text only, T fitted on dev, scored on test): uniform target accuracy 0.516 / macro-F1 0.378; dev class
+frequencies 0.597 / 0.347; alpha = 0.5 gives 0.582 / 0.379. Pick it by the metric the project reports, on dev data only.
+
+Simulated check (`prior_correction.py`, exact posteriors, macro-F1, all three modalities present, test labels at MELD frequencies):
+
+| models trained with | no correction (before) | declared, uniform target | declared, natural target | declared wrongly |
+|---|---|---|---|---|
+| all balanced (class_weight=balanced) | 0.717 | 0.717 | 0.753 | 0.343 |
+| all unweighted (natural prior) | 0.574 | 0.717 | 0.753 | 0.574 |
+| mixed: text unweighted, audio/face balanced | 0.753 | 0.717 | 0.753 | 0.597 |
+
+* The corrected fusion equals the exact Bayes posterior to 2e-15; this is an algebra check, not a performance claim.
+* Without correction, models trained on the natural prior over-predict neutral more as modalities are added.
+* **A wrong declaration is worse than no correction** (last column). `model_priors` must match how each model was really
+  trained. Check on dev data: a calibrated model's mean predicted probability per class should be close to the prior it assumes.
+  Dividing out a prior is only approximate for regularised models.
+
 ## Configuration
 
 Every tunable value lives in `FusionConfig` (`ReliabilityAwareFuser(FusionConfig(...))` or keyword overrides). `basis` says why a
@@ -82,6 +118,9 @@ choice with no supporting measurement, `engineering` = numerical safeguard. Noth
 | `labels` | MELD 7 classes, alphabetical | engineering | Class names; the order of every probability vector. Must match the models' output order. |
 | `modalities` | `("text", "audio", "face")` | engineering | Modality names accepted as input keys. |
 | `modality_support` | `{}` (all classes) | engineering | Per-modality list of the classes the model can actually predict. Modalities not listed support all classes. Columns outside the support are ignored, never read as 0. See fusion/DESIGN_partial_support.md. |
+| `model_priors` | `{}` | assumption | Per-modality class prior that the model's probabilities ASSUME (the prior of its training distribution): 'uniform' (default) or one positive number per label, in label order. class_weight='balanced' training -> uniform; unweighted training -> the training class frequencies. It is divided out before pooling so a prior is not counted once per model (Bayes: P(c|x_1..x_M) ~ pi_t(c) * prod_m p_m(c|x_m) / pi_m(c)). Declared by the model owner, never estimated here; a wrong declaration makes results worse, not better. Partial-support modalities must stay 'uniform'. |
+| `target_prior` | `'uniform'` | assumption | Class prior of the FUSED output, applied exactly once: 'uniform' (default: no prior imposed; suits macro-F1 / balanced accuracy), 'dev' (class frequencies of the y_dev given to fit(), Laplace-smoothed; suits accuracy) or an explicit vector. This is a real accuracy / macro-F1 trade-off, not a free gain: on the real MELD text model alone (independent reproduction, text only) moving uniform -> dev frequencies raised test accuracy 0.516 -> 0.597 and lowered test macro-F1 0.378 -> 0.347. |
+| `target_prior_power` | `1.0` | assumption | Exponent alpha in [0, 1] applied to a non-uniform target prior (pi_t ~ pi^alpha): 0 = uniform, 1 = as given. Interpolates between the two objectives (text-only check on real MELD outputs: alpha=0.5 gave test accuracy 0.582 / macro-F1 0.379 vs 0.516 / 0.378 for uniform). Choose it on dev data only. Ignored when target_prior is 'uniform'. |
 | `pooling` | `'linear'` | assumption | 'linear' = weighted mean of probabilities (project-brief formula). 'log' = weighted product of experts. Log scored higher on SIMULATED data (+0.023 mean macro-F1, better in 8 of 9 scenarios, never worse), but that simulation assumes independent errors, which favours log by construction; choose after correlated-error and real-dev results. |
 | `use_calibration` | `True` | evidence | Temperature-scale each modality (fit on dev data only; needs fit(), an un-fitted fuser warns once and applies nothing). Switching it off cost 0.038 macro-F1 on average in the simulation (worse in 8 of 9 scenarios) -- but the simulated models are over-confident by construction, so real-data benefit is unverified. |
 | `use_priors` | `False` | evidence | Multiply weights by each modality's dev macro-F1. Simulated: -0.004 mean macro-F1 with linear pooling (worse in 5 of 9 scenarios, best case +0.003) and -0.002 with log. F1 values from different class subsets are also not directly comparable. Revisit in the prior-correction stage. |
@@ -102,6 +141,7 @@ choice with no supporting measurement, `engineering` = numerical safeguard. Noth
 python -m pytest fusion/tests -q                      # fusion-specific unit tests (numpy + pytest only)
 python -m fusion.experiments.synthetic_experiment     # ~2 min, writes fusion/results/synthetic_results.json
 python -m fusion.experiments.isolated_options         # ~15 s, writes fusion/results/isolated_options.json
+python -m fusion.experiments.prior_correction         # a few seconds, writes fusion/results/prior_correction.json
 ```
 
 ### Simulated results (not real-data performance)
@@ -144,17 +184,18 @@ Honest reading:
   switch quality and consistency on, but that selection does not hold up when each factor is isolated.
 * The default conflict rule is **not discriminative** in the simulation (flags 65 % of clean samples vs 74 % with injected
   conflicts), while fused confidence detects errors better (AUROC 0.76 vs 0.62). Abstaining on the 20 % least-confident
-  predictions raised simulated accuracy 0.718 to 0.790. (These three figures are from the first of the 5 draws only.)
-  The rule is to be replaced by a dev-derived one.
+  predictions raised simulated accuracy 0.718 to 0.790. The rule is to be replaced by a dev-derived one.
 
 ## Known gaps
 
 1. **No real predictions.** Needed: per-utterance probabilities from all three models on the same MELD dev and test
    `sample_id`s, with the models trained on `train` only. Nothing here has been evaluated on them.
-2. **Text model:** trained on `dair-ai/emotion` (6 classes, tweets), not MELD. The `love -> joy` merge is an assumption. Whether
-   to keep the conservative policy or learn a map from text outputs to MELD classes on dev predictions cannot be decided
-   without those predictions.
+2. **Text model:** `text_emotion/` now trains on MELD (7 classes; reported ~51 % accuracy). I reproduced that independently
+   (text only) but no prediction file from the team's own run is in the repository, so it is not verified from their artifact.
+   `text_emotion/predict.py` preprocesses text while `train.py` / `evaluate.py` use raw text, and the README still quotes an old
+   41.38 %: both are the text owner's to fix. The partial-support policy remains for any model that lacks classes.
 3. **Speech model:** reported MELD test accuracy 23.2 % (macro-F1 0.19). The repo's `speech_emotion/training/mosei_data.py`
    currently has a stray markdown fence on line 7 (a `SyntaxError`) that prevents importing the package; that file is not part of this module.
 4. **Face model:** not in the repository yet.
-5. **Open in this module:** training-prior double counting, correlated-error experiments, the conflict/abstention rule.
+5. **Open in this module:** calibration fitted on natural-prior dev data is confounded with prior shift for balanced models (fit it
+   under the target prior); correlated-error experiments; the conflict/abstention rule.

@@ -83,3 +83,20 @@ def text_probs_from_model(model, texts: Sequence[str]) -> np.ndarray:
         raise ValueError(f"unexpected text model classes_ {classes}; expected ids 0..{len(DAIR_EMOTION_LABELS) - 1}")
     ordered = raw[:, [classes.index(i) for i in range(len(DAIR_EMOTION_LABELS))]]
     return remap_probs(ordered, DAIR_EMOTION_LABELS, MELD_LABELS, DAIR_TO_MELD, missing_fill=np.nan)
+
+
+def meld_text_probs_from_model(model, texts: Sequence[str]) -> np.ndarray:
+    """``(N, 7)`` MELD-ordered probabilities from a text model trained on MELD itself
+    (``text_emotion/train.py``: a scikit-learn pipeline whose ``classes_`` are the MELD emotion names).
+
+    Columns are reordered by NAME into ``MELD_LABELS`` order. The model must expose exactly the 7 MELD
+    classes: a missing or unknown class raises ``ValueError`` instead of being filled with 0 or NaN
+    (use ``text_support_config`` / ``text_probs_from_model`` for a model that really lacks classes).
+    ``texts`` must be the RAW utterance text: that pipeline is trained on raw text, so passing it
+    ``preprocess_text`` output (as ``text_emotion/predict.py`` currently does) is a train/inference mismatch.
+    """
+    classes = [str(c).strip().lower() for c in model.classes_]
+    if sorted(classes) != sorted(MELD_LABELS):
+        raise ValueError(f"text model classes_ {classes} are not the 7 MELD classes {list(MELD_LABELS)}")
+    raw = np.asarray(model.predict_proba(list(texts)), dtype=float)
+    return raw[:, [classes.index(l) for l in MELD_LABELS]]

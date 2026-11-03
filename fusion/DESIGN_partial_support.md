@@ -1,6 +1,11 @@
 # Modalities that cannot predict every class (the text model)
 
 Status: **implemented and unit-tested on synthetic inputs; not validated on real predictions.**
+
+> **Update 2026-10-28.** The text model in `text_emotion/` was retrained on MELD and now predicts all 7 classes
+> (string `classes_`; use `meld_text_probs_from_model`). For that model the partial-support machinery below is **not used**.
+> It stays for any model that lacks classes, and the section describes the older 6-class `dair-ai/emotion` model.
+> Class priors (separate topic) are handled in README section "Class priors".
 Nothing in this document is a measured property of the real text model.
 
 ## 1. The problem
