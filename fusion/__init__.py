@@ -3,6 +3,7 @@ from .adapters import (
     DAIR_EMOTION_LABELS, DAIR_TO_MELD, TEXT_SUPPORT, from_ser_prediction, from_text_probs,
     text_probs_from_model, meld_text_probs_from_model, text_support_config,
 )
+from .abstention import grouped_folds, out_of_fold_confidence, select_min_confidence
 from .calibration import apply_temperature, expected_calibration_error, fit_temperature
 from .config import FusionConfig
 from .core import (
@@ -17,6 +18,7 @@ from .labels import MELD_LABELS, MODALITIES, remap_probs
 from .metrics import accuracy, confusion_matrix, macro_f1, per_class_prf
 
 __all__ = [
+    "grouped_folds", "out_of_fold_confidence", "select_min_confidence",
     "DAIR_EMOTION_LABELS", "DAIR_TO_MELD", "TEXT_SUPPORT", "from_ser_prediction", "from_text_probs",
     "text_probs_from_model", "meld_text_probs_from_model", "text_support_config",
     "BatchResult", "FusionConfig", "FusionConfigError", "FusionInputError", "FusionResult",

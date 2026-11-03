@@ -114,6 +114,27 @@ Simulated check (`prior_correction.py`, exact posteriors, macro-F1, all three mo
   trained. Check on dev data: a calibrated model's mean predicted probability per class should be close to the prior it assumes.
   Dividing out a prior is only approximate for regularised models.
 
+## Abstention threshold from dev data
+
+`min_confidence` (abstain when the fused top probability is below it) should come from data, not a guess. `fusion/abstention.py`:
+
+```python
+oof = out_of_fold_confidence(cfg, dev_probs, y_dev, dialogue_ids, n_folds=5)      # refit on other dialogues, score the held-out ones
+thr, info = select_min_confidence(oof["confidence"], oof["correct"], coverage=0.8)   # or max_risk=0.35
+fuser = ReliabilityAwareFuser(cfg, min_confidence=thr)
+```
+
+Folds are by **dialogue**, so utterances of one dialogue never sit in both the fitting and the scoring part. Only dev data is used.
+The conflict flag (`conflict_threshold`) is still the provisional rule and is included in `uncertain`; set `conflict_threshold=1.0`
+to abstain on confidence alone.
+
+Real text-only check (independent reproduction, balanced model, 1,109 dev utterances in 114 dialogues, 2,610 test): fused confidence
+separates correct from wrong predictions with AUROC 0.67 on dev (out-of-fold) and 0.68 on test. A threshold chosen for 80 % dev coverage
+kept 79.7 % of test utterances and lowered the test error among kept predictions from 0.484 to 0.428 (60 % coverage: 0.374). Choosing the
+threshold from in-sample instead of out-of-fold scores gave the same thresholds to three decimals here, because only one temperature is fitted per
+model; the grouped procedure matters when more is fitted on dev, and costs nothing. This is text only: nothing is known yet about the fused
+output with audio and face.
+
 ## Configuration
 
 Every tunable value lives in `FusionConfig` (`ReliabilityAwareFuser(FusionConfig(...))` or keyword overrides). `basis` says why a
@@ -205,5 +226,5 @@ Honest reading:
 3. **Speech model:** reported MELD test accuracy 23.2 % (macro-F1 0.19). The repo's `speech_emotion/training/mosei_data.py`
    currently has a stray markdown fence on line 7 (a `SyntaxError`) that prevents importing the package; that file is not part of this module.
 4. **Face model:** not in the repository yet.
-5. **Open in this module:** correlated-error experiments; the conflict/abstention rule; calibration of the *fused* output (only single
+5. **Open in this module:** correlated-error experiments; replacing the conflict flag (the confidence-based abstention above is in place); calibration of the *fused* output (only single
    models were checked on real data).
