@@ -3,9 +3,10 @@
 Decision-level fusion of the text, speech and face emotion models. Owner: Alok.
 Integration contract: see "Interface" below. Design of the text-model policy: [`DESIGN_partial_support.md`](DESIGN_partial_support.md).
 
-> **Status.** Verified: the code, by unit tests on synthetic inputs. **Not verified: any result on real data.**
-> No real model predictions exist in the repository yet (no face model, no text model file, no saved speech
-> predictions), so every performance number below comes from a *simulator* and says nothing about MELD or CMU-MOSEI.
+> **Status.** Verified: the code, by unit tests on synthetic inputs. Real predictions exist for **two of the three modalities**
+> (speech: exported by the speech owner; text: my independent reproduction of the text owner's pipeline, not their saved file; face: none),
+> so the only real-data fusion result is the preliminary text + speech check in "First check on real predictions". Every other performance
+> number below comes from a *simulator* and says nothing about MELD or CMU-MOSEI.
 
 ## Interface
 
@@ -137,6 +138,36 @@ kept 79.7 % of test utterances and lowered the test error among kept predictions
 threshold from in-sample instead of out-of-fold scores gave the same thresholds to three decimals here, because only one temperature is fitted per
 model; the grouped procedure matters when more is fitted on dev, and costs nothing. This is text only: nothing is known yet about the fused
 output with audio and face.
+
+## First check on real predictions (preliminary: 2 of 3 modalities)
+
+Inputs: **speech** = `features/fusion/speech_{dev,test}_probabilities.csv` as pushed by the speech owner (1,105 of 1,109 dev and 2,606 of 2,610 test
+utterances; the 4 missing per split are treated as missing modality); **text** = my independent reproduction of `text_emotion/train.py`
+(not the text owner's saved output, which is not in the repository; their reported 51.46 % / macro-F1 0.38 matches my 0.516 / 0.378). No face model.
+Run with `evaluate_real` (`--probs audio=... --strip-split-prefix`), everything chosen on dev, one test set (2,610 utterances), uncertainty by
+paired bootstrap over test **dialogues** (1,000 resamples, 95 % interval), fused vs each model alone under the same configuration.
+
+What the speech outputs are: accuracy 0.494 on test but macro-F1 only 0.131, because it labels 95 % of utterances neutral; its mean predicted
+probabilities equal the natural class frequencies. It behaves like an unweighted model that mostly returns the class prior. That is why `model_priors` matters:
+
+| fusion configuration (log or linear as selected on dev) | accuracy | macro-F1 | fused minus text alone: accuracy | fused minus text alone: macro-F1 |
+|---|---|---|---|---|
+| text alone | 0.516 | 0.378 | | |
+| speech alone | 0.494 | 0.131 | | |
+| priors NOT declared (plain pooling) | 0.591 | 0.367 | +0.076 [+0.059, +0.093] | -0.011 [-0.031, +0.009] |
+| speech prior declared (train frequencies), uniform target | 0.526 | 0.383 | +0.011 [-0.002, +0.023] | +0.005 [-0.008, +0.017] |
+| speech prior declared, dev-frequency target | 0.595 | 0.343 | -0.001 [-0.012, +0.011] | +0.011 [-0.001, +0.023] |
+
+* The **+7.6 accuracy points** of plain pooling are the class prior, not information from the voice: the speech model re-supplies the neutral-heavy
+  prior (text alone with the dev-frequency target reaches the same 0.596 accuracy). Macro-F1 did not improve. Without the prior correction this
+  would have looked like a fusion win.
+* With the priors handled correctly, **adding this speech model to text gives no detectable gain**: every interval includes 0. After the prior is
+  divided out the speech model alone scores 0.262 accuracy / 0.199 macro-F1, i.e. weak but above chance, and the gain over text is within noise.
+* The speech model's training prior is **inferred** from its outputs (mean probabilities, 95 % neutral predictions), not confirmed by its owner; if it
+  was trained with class weights the declaration is wrong and these rows change.
+* The conflict flag was rejected on dev (disagreement does not predict errors) and abstention at 80 % coverage worked on test (error among kept
+  0.359-0.414 vs 0.405-0.474 overall, depending on the configuration).
+* Limits: two modalities; one test set; the text side is a reproduction; the speech file's training protocol (train only) is as stated by its owner, not verified here.
 
 ## Evaluating real predictions
 
@@ -283,15 +314,15 @@ not changed, to avoid silently altering the integrated output.
 
 ## Known gaps
 
-1. **No real predictions.** Needed: per-utterance probabilities from all three models on the same MELD dev and test
-   `sample_id`s, with the models trained on `train` only. Nothing here has been evaluated on them.
+1. **Real predictions are incomplete.** Speech outputs exist (see "First check on real predictions"); the face model has none and the text
+   owner's own probability file is not in the repository. Needed: all three on the same MELD dev and test `sample_id`s, trained on `train` only.
 2. **Text model:** `text_emotion/` now trains on MELD (7 classes; reported ~51 % accuracy). I reproduced that independently
    (text only) but no prediction file from the team's own run is in the repository, so it is not verified from their artifact.
    `text_emotion/predict.py` preprocesses text while `train.py` / `evaluate.py` use raw text, and the README still quotes an old
    41.38 %: both are the text owner's to fix. The partial-support policy remains for any model that lacks classes.
-3. **Speech model:** reported MELD test accuracy 23.2 % (macro-F1 0.19). The repo's `speech_emotion/training/mosei_data.py`
-   currently has a stray markdown fence on line 7 (a `SyntaxError`) that prevents importing the package; that file is not part of this module.
+3. **Speech model:** the exported probabilities are close to the class prior (95 % of test utterances labelled neutral, macro-F1 0.13; 0.20 after
+   the prior is divided out), so it adds little to text so far. Its training prior is inferred, not confirmed. The earlier syntax error in
+   `mosei_data.py` was fixed by its owner.
 4. **Face model:** not in the repository yet.
-5. **Untested on real multi-modal data:** every fusion comparison, the choice between linear and log pooling, `calibrate_fused`,
-   the conflict-flag decision and the abstention threshold with more than one modality. The tools to do it on real predictions
-   (`evaluate_real`) exist; the predictions do not.
+5. **Untested with all three modalities:** the comparisons above use text + speech only. The choice between linear and log pooling,
+   `calibrate_fused`, reliability weighting under real noise, and the conflict flag with three modalities still need the face predictions.
