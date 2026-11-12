@@ -16,6 +16,7 @@ Design principles:
 from __future__ import annotations
 
 import dataclasses
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -29,6 +30,8 @@ from sklearn.svm import SVC
 
 from speech_emotion.config import TOTAL_MFCC_FEATURES
 from speech_emotion.model.label_mapping import MELDLabelEncoder, MELD_CLASS_NAMES
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +208,13 @@ class SERClassifier:
 
         # Build pipeline and fit
         self._pipeline = self._build_pipeline()
-        self._pipeline.fit(X_arr, validated_labels)
+        # Current scikit-learn versions use numeric checks in MLP's
+        # early-stopping scorer. Encode only that estimator's targets while
+        # keeping the public classifier API string-based.
+        fit_labels: Sequence[Union[str, int]] = validated_labels
+        if self.config.classifier_type == "mlp":
+            fit_labels = self.label_encoder.encode(validated_labels)
+        self._pipeline.fit(X_arr, fit_labels)
         self._is_fitted = True
 
         return self
@@ -262,7 +271,10 @@ class SERClassifier:
         X_arr, is_single = self._validate_input_features(X)
 
         preds = pipe.predict(X_arr)
-        preds_list = [str(p) for p in preds]
+        if self.config.classifier_type == "mlp":
+            preds_list = [self.label_encoder.decode_label(int(p)) for p in preds]
+        else:
+            preds_list = [str(p) for p in preds]
 
         if is_single:
             return preds_list[0]
@@ -294,11 +306,15 @@ class SERClassifier:
         # Re-index columns if model classes differ from canonical order
         reordered = np.zeros((len(X_arr), len(canonical_classes)), dtype=np.float64)
         for target_idx, class_name in enumerate(canonical_classes):
-            if class_name in model_classes:
-                src_idx = model_classes.index(class_name)
+            source_class: Union[str, int] = target_idx if self.config.classifier_type == "mlp" else class_name
+            if source_class in model_classes:
+                src_idx = model_classes.index(source_class)
                 reordered[:, target_idx] = raw_probs[:, src_idx]
 
-        return reordered
+        row_sums = reordered.sum(axis=1, keepdims=True)
+        if np.any(row_sums <= 0):
+            raise RuntimeError("Model returned no probability mass for the canonical classes.")
+        return (reordered / row_sums).astype(np.float64)
 
     def save(
         self,
@@ -387,6 +403,19 @@ class SERClassifier:
                 encoder = MELDLabelEncoder(classes=classes)
             except Exception as enc_err:
                 raise ValueError(f"Invalid class definitions in model artifact at {path}: {enc_err}") from enc_err
+
+            # scikit-learn 1.9 removed the persisted ``multi_class``
+            # constructor attribute, while 1.7 still reads it during
+            # predict_proba. Restore the documented default for this known
+            # cross-version artifact shape and make the compatibility action
+            # visible in logs.
+            classifier = artifact["pipeline"].steps[-1][1]
+            if isinstance(classifier, LogisticRegression) and not hasattr(classifier, "multi_class"):
+                classifier.multi_class = "auto"
+                logger.warning(
+                    "Loaded a LogisticRegression artifact without multi_class; "
+                    "restored 'auto' for scikit-learn compatibility."
+                )
 
             model = cls(config=config, label_encoder=encoder)
             model._pipeline = artifact["pipeline"]

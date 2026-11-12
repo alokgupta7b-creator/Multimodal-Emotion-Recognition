@@ -1,0 +1,51 @@
+# Version control & editor artifacts
+.git
+.gitignore
+.github
+*.md
+docs/
+
+# Environment files & local secrets
+.env
+.env.*
+!.env.example
+!.env.staging.example
+
+# Python caches & tests
+__pycache__/
+**/__pycache__/
+*.py[codz]
+.pytest_cache/
+**/.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Large datasets, caches & model checkpoints (mounted read-only via volume in staging)
+datasets/
+features/
+models/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.safetensors
+*.onnx
+*.joblib
+*.npy
+*.npz
+*.h5
+*.hdf5
+*.mp4
+*.webm
+*.wav
+*.tmp
+*.log
+
+# Frontend dependencies & build outputs
+frontend/node_modules/
+frontend/dist/
+npm-debug.log*
+

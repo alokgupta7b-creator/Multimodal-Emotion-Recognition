@@ -1,45 +1,25 @@
 
 from pathlib import Path
 
-import joblib
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report, f1_score
 from sklearn.pipeline import Pipeline
+from project_config import MELD_SPLITS, TEXT_MODEL_PATH, meld_annotation_path, validate_meld_dataset
+from text_emotion.model_io import write_model_metadata
+from text_emotion.preprocessing import preprocess_text
 
 # Project paths
 ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = ROOT.parent / "meld_dataset"
-
-# Find MELD CSV files, even if they are inside a subfolder
-def find_csv(filename):
-    matches = list(DATA_DIR.rglob(filename))
-    if not matches:
-        raise FileNotFoundError(
-            f"Could not find {filename} inside {DATA_DIR}"
-        )
-    return matches[0]
 
 
-train_df = pd.read_csv(find_csv("train_sent_emo.csv"))
-dev_df = pd.read_csv(find_csv("dev_sent_emo.csv"))
-test_df = pd.read_csv(find_csv("test_sent_emo.csv"))
-
-# Remove rows without text or labels
-for df in (train_df, dev_df, test_df):
-    df.dropna(subset=["Utterance", "Emotion"], inplace=True)
-    df["Utterance"] = df["Utterance"].astype(str).str.strip()
-    df["Emotion"] = df["Emotion"].astype(str).str.strip().str.lower()
-    df.drop(df[df["Utterance"] == ""].index, inplace=True)
-
-# Train only on the official training split
-X_train = train_df["Utterance"]
-y_train = train_df["Emotion"]
-
-# Evaluate on validation and test splits
-X_dev, y_dev = dev_df["Utterance"], dev_df["Emotion"]
-X_test, y_test = test_df["Utterance"], test_df["Emotion"]
+def load_split(split: str) -> pd.DataFrame:
+    frame = pd.read_csv(meld_annotation_path(split))
+    frame = frame.dropna(subset=["Utterance", "Emotion"]).copy()
+    frame["Utterance"] = frame["Utterance"].map(preprocess_text)
+    frame["Emotion"] = frame["Emotion"].astype(str).str.strip().str.lower()
+    return frame[frame["Utterance"] != ""].copy()
 
 
 from sklearn.pipeline import FeatureUnion
@@ -67,29 +47,34 @@ model = Pipeline([
         random_state=42
     ))
 ])
+def main() -> None:
+    validate_meld_dataset()
+    frames = {split: load_split(split) for split in MELD_SPLITS}
+    X_train, y_train = frames["train"]["Utterance"], frames["train"]["Emotion"]
+    X_dev, y_dev = frames["dev"]["Utterance"], frames["dev"]["Emotion"]
+    X_test, y_test = frames["test"]["Utterance"], frames["test"]["Emotion"]
+
+    print("Training text emotion model on MELD...")
+    print(f"Training samples: {len(X_train)}")
+    print(f"Validation samples: {len(X_dev)}")
+    print(f"Test samples: {len(X_test)}")
+    model.fit(X_train, y_train)
+
+    dev_predictions = model.predict(X_dev)
+    print(f"Validation Macro F1: {f1_score(y_dev, dev_predictions, average='macro', zero_division=0):.4f}")
+    print(f"Validation Accuracy: {accuracy_score(y_dev, dev_predictions):.4f}")
+    print(classification_report(y_dev, dev_predictions, zero_division=0))
+
+    test_predictions = model.predict(X_test)
+    print(f"Test Accuracy: {accuracy_score(y_test, test_predictions):.4f}")
+    print(classification_report(y_test, test_predictions, zero_division=0))
+
+    model_path = TEXT_MODEL_PATH
+    import joblib
+    joblib.dump(model, model_path)
+    write_model_metadata(model, model_path, {split: len(frame) for split, frame in frames.items()})
+    print(f"Model saved to: {model_path}")
 
 
-print("Training text emotion model on MELD...")
-print(f"Training samples: {len(X_train)}")
-print(f"Validation samples: {len(X_dev)}")
-print(f"Test samples: {len(X_test)}")
-
-model.fit(X_train, y_train)
-
-# Validation evaluation
-dev_predictions = model.predict(X_dev)
-print(f"Validation Macro F1: {f1_score(y_dev, dev_predictions, average='macro'):.4f}")
-print("\n--- MELD Validation Results ---")
-print(f"Accuracy: {accuracy_score(y_dev, dev_predictions):.4f}")
-print(classification_report(y_dev, dev_predictions, zero_division=0))
-
-# Final test evaluation
-test_predictions = model.predict(X_test)
-print("\n--- MELD Test Results ---")
-print(f"Accuracy: {accuracy_score(y_test, test_predictions):.4f}")
-print(classification_report(y_test, test_predictions, zero_division=0))
-
-# Save the trained pipeline
-model_path = ROOT / "text_emotion_model.joblib"
-joblib.dump(model, model_path)
-print(f"\nModel saved to: {model_path}")
+if __name__ == "__main__":
+    main()

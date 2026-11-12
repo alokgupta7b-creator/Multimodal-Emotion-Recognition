@@ -1,0 +1,137 @@
+{
+  "total_parameters": 94151,
+  "layers": 11,
+  "dev_accuracy": 0.1425925925925926,
+  "dev_macro_f1": 0.03655001767408978,
+  "dev_per_class": {
+    "anger": {
+      "precision": 0.14100185528756956,
+      "recall": 1.0,
+      "f1-score": 0.24715447154471545,
+      "support": 152.0
+    },
+    "disgust": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1-score": 0.0,
+      "support": 22.0
+    },
+    "fear": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1-score": 0.0,
+      "support": 38.0
+    },
+    "joy": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1-score": 0.0,
+      "support": 155.0
+    },
+    "neutral": {
+      "precision": 1.0,
+      "recall": 0.004366812227074236,
+      "f1-score": 0.008695652173913044,
+      "support": 458.0
+    },
+    "sadness": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1-score": 0.0,
+      "support": 108.0
+    },
+    "surprise": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1-score": 0.0,
+      "support": 147.0
+    },
+    "accuracy": 0.1425925925925926,
+    "macro avg": {
+      "precision": 0.16300026504108137,
+      "recall": 0.14348097317529632,
+      "f1-score": 0.03655001767408978,
+      "support": 1080.0
+    },
+    "weighted avg": {
+      "precision": 0.4439187796330653,
+      "recall": 0.1425925925925926,
+      "f1-score": 0.038472304046711966,
+      "support": 1080.0
+    }
+  },
+  "dev_confusion_matrix": [
+    [
+      152,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      22,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      38,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      155,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      456,
+      0,
+      0,
+      0,
+      2,
+      0,
+      0
+    ],
+    [
+      108,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      147,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  ],
+  "mean_predicted_probabilities": {
+    "anger": 0.7338436841964722,
+    "disgust": 0.009680856950581074,
+    "fear": 0.004101884551346302,
+    "joy": 0.08613160997629166,
+    "neutral": 0.10291258990764618,
+    "sadness": 0.042104873806238174,
+    "surprise": 0.02122441679239273
+  }
+}

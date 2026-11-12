@@ -121,6 +121,22 @@ class TestTrainingPipeline(unittest.TestCase):
         self.assertTrue((eval_dir / "dev_eval_metrics.json").exists())
         self.assertTrue((eval_dir / "dev_eval_report.md").exists())
 
+    def test_mlp_early_stopping_handles_string_emotion_labels(self):
+        """MLP compatibility encoding keeps the public prediction API textual."""
+        cfg = SERConfig(
+            classifier_type="mlp",
+            mlp_hidden_layers=(8,),
+            max_iter=5,
+            mlp_early_stopping=True,
+            random_state=42,
+        )
+        model, _ = train_single_model(cfg, self.train_split)
+        predictions = model.predict(self.dev_split.X)
+        probabilities = model.predict_proba(self.dev_split.X)
+        self.assertTrue(all(label in model.classes_ for label in predictions))
+        self.assertEqual(probabilities.shape, (len(self.dev_split.X), 7))
+        np.testing.assert_allclose(probabilities.sum(axis=1), 1.0, atol=1e-6)
+
 
 if __name__ == "__main__":
     unittest.main()

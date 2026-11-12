@@ -151,6 +151,9 @@ activemq-data/
 
 # Environments
 .env
+.env.*
+!.env.example
+!.env.staging.example
 .envrc
 .venv
 env/
@@ -158,6 +161,10 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
 
 # Spyder project settings
 .spyderproject
@@ -284,8 +291,11 @@ models/
 checkpoints/
 **/checkpoints/
 
-# Locally trained text emotion model
+# Locally trained text emotion model & staging bundles/backups
 text_emotion_model.joblib
+staging_models_bundle/
+backups/
+*.tmp
 !features/
 !features/fusion/
 !features/fusion/text_dev_probabilities.csv

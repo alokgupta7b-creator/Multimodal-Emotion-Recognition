@@ -1,153 +1,193 @@
-# Multimodal Emotion Recognition Using Text, Speech, and Facial Features with Robust Feature Fusion
+# Multimodal Emotion Recognition System (Text, Speech, and Facial Video)
 
-A research-oriented benchmark and implementation framework for conversational emotion recognition across textual, acoustic, and visual modalities, integrating reliability-aware feature fusion.
-
----
-
-## 1. Project Overview & Research Objectives
-
-Conversational Emotion Recognition (CER) requires capturing emotional transitions and subtle affective cues across multiple parallel communication channels. This repository provides an end-to-end framework for multimodal emotion classification that:
-- **Models Conversational Context**: Tracks multi-party dialogue dynamics and emotional shifts across consecutive speaker turns.
-- **Extracts Complementary Unimodal Representations**:
-  - **Text**: Linguistic embeddings capturing dialogue semantics and contextual sentiment.
-  - **Speech**: Acoustic features (MFCCs, spectral descriptors, pitch, and voice energy) reflecting prosody and vocal affect.
-  - **Facial Video**: Spatial-temporal representations of facial action units and expressions across video frames.
-- **Applies Robust Feature Fusion**: Mitigates unimodal uncertainty and sensory noise by evaluating cross-modal consistency before computing joint prediction distributions.
-- **Preserves Dataset Integrity**: Implements deterministic, reproducible data preparation and strict split boundaries without data leakage.
+An end-to-end multimodal conversational emotion recognition application that predicts **7 canonical emotions** (`anger`, `disgust`, `fear`, `joy`, `neutral`, `sadness`, `surprise`) across **text**, **speech audio (`.wav`)**, and **facial video (`.mp4` / `.webm`)** using fine-tuned deep learning models, post-hoc probability calibration, quality-gated multimodal fusion, a FastAPI backend, and a React + TypeScript web studio.
 
 ---
 
-## 2. System Architecture
+## 1. Tech Stack
 
-The framework consists of three specialized unimodal processing branches unified by a reliability-aware multimodal fusion module:
+| Layer | Technologies & Versions (Verified in Workspace) | Role |
+| :--- | :--- | :--- |
+| **Deep Learning & Models** | `torch==2.6.0`, `transformers==5.2.0`, `safetensors==0.6.2`, `facenet-pytorch==2.5.3` | DistilBERT (text), Wav2Vec2 (speech), MTCNN face detection + ResNet18 (facial) |
+| **Audio & Vision Processing** | `librosa==0.11.0`, `soundfile==0.13.1`, `opencv-python==4.11.0.86`, `Pillow` | 16 kHz mono WAV loading, silence trimming, sequential video frame decoding, 96×96 RGB crops |
+| **Scientific & ML Utilities** | `numpy==2.3.5`, `scipy==1.16.3`, `pandas==2.3.3`, `scikit-learn==1.7.2`, `joblib==1.5.2`, `h5py==3.15.1` | Calibration optimization, manifest processing, evaluation metrics, classical baselines |
+| **Backend API & Serving** | `fastapi==0.115.0`, `uvicorn==0.32.0`, `python-multipart==0.0.12` | REST inference endpoints, size/MIME/duration validation, rate limiting, Prometheus `/metrics` |
+| **Frontend Web Studio** | `react==18.3.1`, `typescript==5.7.2`, `vite==6.0.5`, `tailwindcss==3.4.17`, `lucide-react==0.468.0` | Multi-tab UI, file uploads, in-browser mic (16 kHz PCM WAV) & webcam (`MediaRecorder`) capture |
+| **Testing & Verification** | `pytest==8.3.4`, Node.js built-in test runner (`node --test`), `puppeteer-core==25.17.0` | 314 Python unit/integration/security tests, frontend API/retry tests, headless E2E scripts |
+| **Staging & Monitoring** | `Docker`, `docker-compose.staging.yml`, `Nginx`, `Caddy`, `Prometheus`, `Grafana` | Containerized staging templates, reverse-proxy TLS config, and telemetry dashboards |
+
+---
+
+## 2. How It Is Implemented
+
+The system separates training/benchmarking pipelines from the real-time serving stack (`api/` + `frontend/`), enforcing a unified 7-class MELD label order across every module: `anger`, `disgust`, `fear`, `joy`, `neutral`, `sadness`, `surprise`.
+
+### A. Unimodal Models & Calibration (`text_emotion/`, `speech_emotion/`, `facial_emotion/`)
+
+1. **Text Emotion Recognition (`DistilBERT`)**
+   - **Module:** [`text_emotion/distilbert_model.py`](text_emotion/distilbert_model.py) (`DistilBertTextPredictor`)
+   - **Checkpoint:** [`models/text_emotion/distilbert/best/`](models/text_emotion/distilbert/best/config.json) (`DistilBertForSequenceClassification`, 6 transformer layers, `dim=768`, 12 attention heads)
+   - **Implementation:** Normalizes input utterances via `preprocess_text()` before tokenization (`max_length=128`) and softmax classification across 7 classes. *(An earlier Phase 2 TF-IDF + Logistic Regression baseline is retained in `text_emotion/` for benchmark comparison.)*
+
+2. **Speech Emotion Recognition (`Wav2Vec2 V2 + Calibration`)**
+   - **Module:** [`speech_emotion/wav2vec2_model.py`](speech_emotion/wav2vec2_model.py) (`Wav2Vec2Predictor`) & [`speech_emotion/audio_loader.py`](speech_emotion/audio_loader.py)
+   - **Checkpoint:** [`models/speech_emotion/wav2vec2_v2/best/`](models/speech_emotion/wav2vec2_v2/best/config.json) (`Wav2Vec2ForSequenceClassification` over `wav2vec2-base`, `hidden_size=768`, `classifier_proj_size=256`, trained with `LogitAdjustedCELoss`)
+   - **Calibration:** [`models/speech_emotion/wav2vec2_v2/best/calibration.json`](models/speech_emotion/wav2vec2_v2/best/calibration.json) applies `temp_plus_l2_bias` (`T = 1.1956`, `regularization = 0.05`) fitted on unpadded `batch_size=1` `dev_cal` logits to match live runtime inference 1:1.
+   - **Implementation:** Loads 16 kHz mono PCM WAV audio (`<= 60.0 s`, RMS `>= -60.0 dB`), trims leading/trailing silence (`trim_leading_trailing_silence()`), bounds processed speech to `8.0 s` (`preprocess_speech_waveform()`), enforces `return_attention_mask=True`, and surfaces acoustic telemetry (`audio_duration_s`, `processed_duration_s`, `trimmed_silence_s`, `audio_rms_db`, `low_volume_warning`).
+
+3. **Facial Emotion Recognition (`MTCNN + ResNet18 V2 + Calibration`)**
+   - **Modules:** [`facial_emotion/mtcnn_detector.py`](facial_emotion/mtcnn_detector.py) & [`facial_emotion/resnet_predictor.py`](facial_emotion/resnet_predictor.py) (`ResNetFacialEmotionPredictor`)
+   - **Checkpoint:** [`models/facial_emotion/resnet18_v2/resnet18_v2_best.pt`](models/facial_emotion/resnet18_v2/calibration.json) (`ResNet18` trained on multi-frame clean MELD crops with webcam augmentations and `LogitAdjustedCrossEntropyLoss(tau=0.40)`)
+   - **Calibration:** [`models/facial_emotion/resnet18_v2/calibration.json`](models/facial_emotion/resnet18_v2/calibration.json) applies `crop_prior_shift_a025_temp` (`alpha = 0.25`, `T = 1.25`) to correct Neutral under-representation from multi-frame training crops.
+   - **Implementation:** Samples 8 frames uniformly (using single-pass sequential `cap.grab()`/`cap.retrieve()` when `<= 240` frames), detects faces via `MTCNN` (`640px` fast pass with native fallback and false-positive aspect/probability filtering), extracts square `margin=0.08` crops resized to `96x96` ImageNet RGB, enforces IEEE FP32 guard (`allow_tf32=False`), verifies SHA-256 checksums on startup with automatic fallback to `exp5_focal_g3_wt_best.pt` (or optional `legacy_cnn` rollback), and aggregates crop predictions (`raw_all_detections_mean_prob`) while reporting `num_faces`, `num_sampled_frames`, `face_detection_coverage`, and `prediction_entropy`.
+
+### B. Quality-Gated Multimodal Fusion (`api/fusion.py`, `api/multimodal_extension.py`)
+
+Instead of training an unconstrained black-box fusion network that could let noisy acoustic/visual frames overwrite clear linguistic evidence, fusion uses a deterministic, auditable two-stage engine ([`ExtendedMultimodalFusionEngine`](api/multimodal_extension.py)):
+
+1. **Text-Anchored Protected Class Safeguard:** When Text predicts subtle/minority classes (`fear`, `disgust`, `sadness`, `joy`), Text authority is preserved (`w_text = 1.0` before optional video check).
+2. **Acoustic Synergy Injection:** When Text is non-protected (e.g., `neutral`) and Speech strongly predicts `anger` or `surprise` with margin $M_a = p_a[\text{pred}] - p_a[\text{neutral}] > 0.20$, Speech receives bounded weight $\lambda_a = \min(0.40, 1.50 \cdot M_a)$.
+3. **Quality-Gated Visual Blend:** When Video passes quality checks (`face_detection_coverage >= 0.40` and `prediction_entropy <= 1.85`), calibrated facial probabilities receive bounded weight `w_v = 0.08` (rescaling Text/Audio weights by `0.92`); if Video fails quality thresholds, it is kept as advisory telemetry with `w_v = 0.0`.
+4. **No-Text Fallbacks:** Supports `Audio` only, `Video` only, and `Audio + Video` seamlessly without fabricating placeholder probability vectors.
+
+### C. Backend Hardening & Frontend Studio (`api/`, `frontend/`)
+
+- **FastAPI Backend (`api/app.py`, `api/model_registry.py`, `api/validation.py`):**
+  - Thread-safe lazy/eager `ModelRegistry` with per-modality `RLock`s and `/health`, `/ready`, `/models/status`, `/metrics`.
+  - Streaming upload size enforcement (`50 MB` / `52,428,800` bytes, `HTTP 413`), text cap (`20,000` chars), `RIFF/WAVE` & `MP4/WebM` magic-byte verification (`HTTP 415`), silent/no-face guards (`HTTP 422`), sliding-window rate limiting (`120` requests / `60 s`, `HTTP 429`), request timeouts (`60 s`, `HTTP 504`), security headers (`nosniff`, `DENY`, `no-store`), and `finally`-block deletion of randomized OS temp files.
+- **React + Vite Studio (`frontend/src/App.tsx`, `LiveCapture.tsx`, `api.ts`, `media.ts`):**
+  - Four interactive modes: **Multimodal**, **Text**, **Speech Audio**, and **Facial Video**.
+  - Client-side `50 MB` upload check, duplicate-request lock (`inFlightRef`), 60 s `AbortController` timeouts with Retry recovery, live microphone RMS dB guidance with browser-side 16 kHz PCM WAV encoding, camera device selector with explicit local-processing consent notice, 1-decimal probability bars (`formatProbabilityPercent`), and `"Low-confidence estimate (<45%)"` advisory notices.
+
+---
+
+## 3. How It Works (End-to-End Request Flow)
 
 ```text
- ┌────────────────┐       ┌───────────────────────────────┐
- │ Dialogue Text  │ ───>  │ Linguistic Context Encoder    │ ──┐
- └────────────────┘       └───────────────────────────────┘   │
-                                                              │
- ┌────────────────┐       ┌───────────────────────────────┐   │     ┌────────────────────────┐       ┌──────────────────┐
- │ Speech Audio   │ ───>  │ Acoustic Feature Extractor    │ ──┼──>  │ Reliability Estimation │ ───>  │ Emotion Class    │
- └────────────────┘       └───────────────────────────────┘   │     │ & Cross-Modal Fusion   │       │ (7 Categories)   │
-                                                              │     └────────────────────────┘       └──────────────────┘
- ┌────────────────┐       ┌───────────────────────────────┐   │
- │ Facial Video   │ ───>  │ Spatial-Temporal Visual Model │ ──┘
- └────────────────┘       └───────────────────────────────┘
+User Input (React Studio: Text / WAV Upload or Live Mic / MP4-WebM Upload or Live Cam)
+   │  [Client 50 MB size check + Consent gate + 60s AbortController timeout]
+   ▼
+FastAPI Gateway (api/app.py & api/validation.py)
+   │  [Rate limit -> Streaming <= 50 MB check -> RIFF/WAVE or MP4/WebM magic-byte check -> Temp file]
+   ▼
+ModelRegistry (api/model_registry.py, per-modality RLock)
+   ├── Text   ──► preprocess_text() -> DistilBERT ─────────────────────────► P_text  (7 probs)
+   ├── Audio  ──► 16 kHz, -60 dB gate -> silence trim + 8s + mask -> Wav2Vec2 + Cal ► P_audio (7 probs)
+   └── Video  ──► 8 frames -> MTCNN -> 96x96 RGB -> ResNet18 + Cal ───────► P_video + coverage/entropy
+   │
+   ▼
+ExtendedMultimodalFusionEngine (api/fusion.py + api/multimodal_extension.py)
+   │  [Protected class lockout / Acoustic synergy (<=0.40) / Video quality gate (w_v=0.08)]
+   ▼
+JSON Response + Immediate Temp Cleanup (`finally` unlink)
+   └── React Studio renders top emotion, 1-decimal 7-class bars, modality weights & <45% advisory
 ```
 
-### Unimodal Branches
-1. **Text Branch**: Encodes conversational history and current utterance tokens to capture contextual dialogue semantics.
-2. **Speech Audio Branch**: Extracts acoustic prosodic features (MFCCs, energy envelopes, fundamental frequency) robust to background acoustic variability.
-3. **Facial Feature Branch**: Processes face-aligned bounding boxes and visual frames to identify temporal micro-expressions and emotion indicators.
-4. **Robust Multimodal Fusion**: Estimates unimodal reliability and cross-modal agreement, dynamically adjusting modality weights to maintain high performance even when a modality is degraded or noisy.
-
 ---
 
-## 3. Supported Benchmarks & Dataset Infrastructure
+## 4. Quickstart — Run Locally
 
-This framework evaluates dynamic reliability and cross-modal consistency across two complementary benchmark datasets:
+### 1. Install Python Dependencies
+Tested on `Python 3.10–3.13` (includes GPU PyTorch or CPU fallback, plus `facenet-pytorch` and `Pillow` for MTCNN):
+```powershell
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+pip install facenet-pytorch==2.5.3 Pillow
+```
 
-### Dataset Comparison
+### 2. Start the FastAPI Backend
+```powershell
+$env:KMP_DUPLICATE_LIB_OK="TRUE"
+$env:EMOTION_API_DEVICE="auto"
+python -m uvicorn api.app:app --host 127.0.0.1 --port 8000
+```
+*(Optional: copy [`.env.example`](.env.example) to `.env` to customize ports, device, or limits.)*
 
-| Feature Dimension | Benchmark 1: [MELD](datasets/MELD/) | Benchmark 2: [CMU-MOSEI](datasets/CMU-MOSEI/) |
+### 3. Build & Start the React Frontend
+```powershell
+cd frontend
+npm.cmd install
+npm.cmd run build
+npm.cmd run dev -- --host localhost --port 5173
+```
+Open **`http://localhost:5173`** in your browser. *(Browser microphone/camera permissions require `localhost` or `HTTPS`.)*
+
+### Key API Endpoints
+
+| Method | Path | Description |
 | :--- | :--- | :--- |
-| **Discourse Context** | Multi-party conversational dialogue (*Friends* sitcom) | In-the-wild monologue video presentations (YouTube) |
-| **Primary Challenge** | Conversational context tracking & speaker turn dynamics | Sensory noise robustness & unconstrained web variability |
-| **Segment Count** | 13,708 utterances (1,433 dialogues) | 23,453 monologue segments (3,294 videos) |
-| **Speaker Count** | Fixed cast of recurring sitcom characters | >1,000 distinct real-world speakers |
-| **Emotion Schema** | 7 Categorical classes (`neutral`, `joy`, `sadness`, `anger`, `surprise`, `disgust`, `fear`) | 6 Continuous intensities in `[0.0, 3.0]` (`happy`, `sad`, `anger`, `surprise`, `disgust`, `fear`) |
-| **Sentiment Schema** | 3 Discrete classes (`positive`, `negative`, `neutral`) | Continuous sentiment score in `[-3.0, +3.0]` |
-| **Modality Alignment** | Utterance-level video (.mp4) and audio (.wav) | Temporal segment timestamps `[start_time, end_time]` (.mp4, .wav, .csd) |
-| **Documentation** | [MELD Dataset Card](datasets/MELD/dataset_card.md) | [CMU-MOSEI Dataset Card](datasets/CMU-MOSEI/dataset_card.md) |
+| `GET` | `/health` | Service liveness and model readiness status |
+| `GET` | `/ready` | Staging/container readiness probe (`200` / `503`) |
+| `GET` | `/models/status` | Active device, identifier, calibration status, and SHA-256 metadata per modality |
+| `GET` | `/metrics` | Prometheus-compatible request, latency, and modality counters (`api/telemetry.py`) |
+| `POST` | `/predict/text` | DistilBERT prediction from JSON `{"text": "..."}` (max 20,000 chars) |
+| `POST` | `/predict/audio` | Wav2Vec2 V2 calibrated prediction from `RIFF/WAVE` `.wav` upload (max 50 MB, `<= 60 s`) |
+| `POST` | `/predict/video` | MTCNN + ResNet18 V2 calibrated prediction from `.mp4` / `.webm` upload (max 50 MB, `<= 60 s`) |
+| `POST` | `/predict/multimodal` | Unified fusion across any combination of `text`, `file` (audio), and `video` |
+
+### Zero-Code Environment Rollback Controls
+- **Disable calibration:** `EMOTION_API_USE_SPEECH_CALIBRATION=0` or `EMOTION_API_USE_FACIAL_CALIBRATION=0`
+- **Roll back Speech to V1 + P1:** `EMOTION_API_AUDIO_MODEL_DIR=models/speech_emotion/wav2vec2/best`
+- **Roll back Facial to V1 or Legacy CNN:** `EMOTION_API_VIDEO_MODEL_PATH=models/facial_emotion/resnet18/exp5_ce_weighted_best.pt` or `EMOTION_API_FACIAL_BACKEND=legacy_cnn`
+- **Disable single-pass video decode:** `EMOTION_API_OPTIMIZED_VIDEO_PIPELINE=0`
 
 ---
 
-## 4. Repository Structure
+## 5. Verified Evaluation & Test Summary
+
+All post-remediation calibration and integration improvements were evaluated on MELD `dev` (`dev_cal` / `dev_val` dialogue-disjoint folds) while keeping the held-out MELD `test` split (`N = 2,610`) untouched (`docs/ACCURACY_RECOVERY_REPORT.md`):
+
+| Modality / Fusion | Evaluation Split (`N`) | Accuracy | Macro-F1 | Weighted-F1 | ECE-15 |
+| :--- | :--- | :---: | :---: | :---: | :---: |
+| **Text (`DistilBERT`)** | MELD `test` (`2,610`, Phase 16) / `full_dev` (`1,108`) | `63.10%` / `60.11%` | `41.55%` / `42.05%` | `60.77%` / `57.00%` | `0.1174` (`dev`) |
+| **Speech (`Wav2Vec2_v2` + `bs=1 reg=0.05` Cal)** | MELD `full_dev` (`1,107`) | `49.86%` | `30.73%` | `47.07%` | `0.0310` |
+| **Facial (`ResNet18_v2` + Prior/Temp Cal)** | MELD `full_dev` (`1,102`) | `38.66%` | `18.06%` | `33.29%` | `0.0531` |
+| **Multimodal (`Text + Audio + Video`)** | MELD `full_dev` (`1,108`) | **`60.74%`** | **`42.55%`** | **`57.63%`** | **`0.0655`** |
+
+### Run Automated Verification
+```powershell
+$env:KMP_DUPLICATE_LIB_OK="TRUE"
+$env:HF_HUB_OFFLINE="1"
+$env:TRANSFORMERS_OFFLINE="1"
+python -m pytest -q --tb=short
+```
+Latest verified suite run: **`314 passed, 0 failed, 0 skipped`** (plus frontend API/retry tests via `node --test frontend/tests/api.test.mjs` and TypeScript/Vite build via `npm.cmd --prefix frontend run build`).
+
+---
+
+## 6. Repository Structure
 
 ```text
 .
-├── README.md                          # Main project documentation & benchmark overview
-├── .gitignore                         # Strict repository exclusions (media, features, models)
-└── datasets/
-    ├── MELD/                          # Benchmark 1: Conversational Emotion Recognition
-    │   ├── README.md                  # MELD module guide & setup instructions
-    │   ├── dataset_card.md            # MELD specifications & anomaly documentation
-    │   ├── download_dataset.ps1       # Annotation download & safe extraction utility
-    │   ├── prepare_dataset.py         # Deterministic preprocessing & manifest generator
-    │   ├── annotations/               # Local annotation CSV directory (.gitkeep tracked)
-    │   ├── manifests/                 # Reproducible split manifests (tracked in git)
-    │   │   ├── train_manifest.csv
-    │   │   ├── dev_manifest.csv
-    │   │   └── test_manifest.csv
-    │   └── reports/                   # Preprocessing validation & exclusion reports
-    │       ├── preprocessing_report.json
-    │       ├── preprocessing_report.md
-    │       └── exclusions.csv
-    └── CMU-MOSEI/                     # Benchmark 2: In-the-Wild Multimodal Monologues
-        ├── README.md                  # CMU-MOSEI module guide & SDK setup reference
-        ├── dataset_card.md            # CMU-MOSEI specifications & continuous schema
-        ├── download_dataset.ps1       # Environment check, SDK helper & archive unpacker
-        ├── prepare_dataset.py         # Deterministic preprocessing & split isolation validator
-        ├── annotations/               # Local annotations directory (.gitkeep tracked)
-        │   └── .gitkeep
-        ├── manifests/                 # Generated split manifests directory (.gitkeep tracked)
-        │   └── .gitkeep
-        ├── reports/                   # Preprocessing audit reports directory (.gitkeep tracked)
-        │   └── .gitkeep
-        └── tests/                     # Automated regression test suite
-            ├── __init__.py
-            ├── fixtures/              # Non-restricted synthetic test fixtures
-            │   ├── synthetic_mosei_annotations.csv
-            │   └── synthetic_splits.json
-            └── test_prepare_dataset.py # Comprehensive unit tests
+├── api/                        # FastAPI app, config, validation, model registry, fusion & telemetry
+├── text_emotion/               # DistilBERT predictor, preprocessing & TF-IDF baseline scripts
+├── speech_emotion/             # Wav2Vec2 V1/V2 training, audio loader, silence trimming & prediction
+├── facial_emotion/             # MTCNN detector, ResNet18 V1/V2, legacy CNN & video temporal pooling
+├── calibration_utils.py        # Temperature, L2 bias & prior-shift post-hoc calibration utilities
+├── frontend/                   # React + Vite + TypeScript Emotion Studio & LiveCapture UI
+├── models/                     # Saved checkpoints, SHA-256 manifests & calibration JSONs
+├── datasets/
+│   ├── MELD/                   # Conversational Emotion Recognition (13,708 utterances, 7 emotions)
+│   └── CMU-MOSEI/              # Monologue multimodal benchmark infrastructure & tests
+├── deploy/                     # Nginx, Caddy & Prometheus/Grafana staging configs
+├── scripts/                    # Dataset prep, validation benchmarks & E2E verification scripts
+├── docs/                       # Architecture diagrams, phase reports & investigation/recovery logs
+├── requirements.txt            # Core Python runtime dependencies
+├── requirements-dev.txt        # Development & pytest dependencies
+├── Dockerfile.backend          # Non-root staging backend container
+└── docker-compose.staging.yml  # Full multi-service staging composition
 ```
 
 ---
 
-## 5. Quickstart & Data Preparation
+## 7. Datasets & Academic Citations
 
-### 1. Clone the Repository
-```bash
-git clone https://github.com/alokgupta7b-creator/Multimodal-Emotion-Recognition.git
-cd Multimodal-Emotion-Recognition
-```
+All raw media files and large feature caches are excluded from Git version control. Prepare local benchmark data using the dataset guides in [`datasets/MELD/`](datasets/MELD/) and [`datasets/CMU-MOSEI/`](datasets/CMU-MOSEI/):
 
-### 2. MELD Dataset Preparation
-Fetch official MELD annotations and generate manifests:
-```powershell
-# Fetch official annotations
-.\datasets\MELD\download_dataset.ps1
-
-# Generate manifests and audit reports
-python datasets/MELD/prepare_dataset.py --meld-raw-dir "datasets/MELD/raw"
-```
-
-### 3. CMU-MOSEI Dataset Preparation
-Verify environment, inspect SDK instructions, and execute the preparation pipeline:
-```powershell
-# Check environment and display SDK download instructions
-.\datasets\CMU-MOSEI\download_dataset.ps1 -CheckEnvironment
-
-# Run metadata validation and generate split manifests
-python datasets/CMU-MOSEI/prepare_dataset.py `
-    --annotations-file "datasets/CMU-MOSEI/annotations/mosei_annotations.csv" `
-    --output-dir "datasets/CMU-MOSEI" `
-    --skip-media-verify
-```
-
-### 4. Run Automated Test Suites
-Execute the regression test suite covering schema validation, split isolation, and deterministic manifests:
-```bash
-python -m unittest discover -s datasets/CMU-MOSEI/tests -v
-```
-
----
-
-## 6. Research Notice & Citations
-
-All raw media files, large precomputed feature matrices (`.npy`, `.h5`, `.csd`), and third-party transcripts are excluded from version control in compliance with academic data governance policies and copyright considerations.
-
-### Academic Citations
+| Dataset | Discourse Context | Segments | Emotion Schema | Reference |
+| :--- | :--- | :---: | :--- | :--- |
+| **MELD** | Multi-party dialogue (*Friends*) | 13,708 utterances (1,433 dialogues) | 7 categorical (`anger`, `disgust`, `fear`, `joy`, `neutral`, `sadness`, `surprise`) | [MELD Dataset Card](datasets/MELD/dataset_card.md) |
+| **CMU-MOSEI** | In-the-wild monologues (YouTube) | 23,453 segments (3,294 videos) | 6 continuous intensities + continuous sentiment `[-3, +3]` | [CMU-MOSEI Dataset Card](datasets/CMU-MOSEI/dataset_card.md) |
 
 ```bibtex
 @inproceedings{poria-etal-2019-meld,
@@ -176,139 +216,3 @@ All raw media files, large precomputed feature matrices (`.npy`, `.h5`, `.csd`),
     pages = "2236--2246"
 }
 ```
----
-
-## Text Emotion Recognition Module
-
-This module predicts emotions from text using Machine Learning techniques. It uses the MELD dataset, TF-IDF feature extraction, and Logistic Regression to classify text into seven emotion categories.
-
-### Features
-
-- Text preprocessing and cleaning.
-- Word-level TF-IDF using unigrams and bigrams.
-- Character-level TF-IDF using character n-grams.
-- Logistic Regression with balanced class weights.
-- Seven emotion categories: anger, disgust, fear, joy, neutral, sadness, and surprise.
-- Hyperparameter tuning using validation data.
-- Model evaluation using accuracy, precision, recall, F1-score, and confusion matrix.
-- Emotion probability generation for multimodal fusion.
-
-### Dataset
-
-The model uses the official MELD dataset.
-
-Required CSV files:
-
-- `train_sent_emo.csv`
-- `dev_sent_emo.csv`
-- `test_sent_emo.csv`
-
-Place the downloaded `meld_dataset` folder in the parent directory of the repository, as configured in the training script.
-
-The dataset is not included in Git version control.
-
-### Installation
-
-```bash
-python -m pip install pandas scikit-learn joblib
-```
-
-### Train the Model
-
-```bash
-python -m text_emotion.train
-```
-
-The training script:
-
-- Loads the official MELD training, validation, and test splits.
-- Extracts word and character TF-IDF features.
-- Trains a Logistic Regression classifier.
-- Evaluates validation and test performance.
-- Saves the trained model as `text_emotion_model.joblib`.
-
-### Tune Hyperparameters
-
-```bash
-python -m text_emotion.tune
-```
-
-The tuning script compares different Logistic Regression regularization values (`C = 1.0, 2.0, 3.0, 4.0`) using validation data and reports accuracy and macro F1-score.
-
-### Predict an Emotion
-
-```bash
-python -m text_emotion.predict
-```
-
-Enter a sentence when prompted. Type `exit` to stop.
-
-### Evaluate the Model
-
-```bash
-python -m text_emotion.evaluate
-```
-
-This evaluates the saved model using the official MELD test split and displays the classification report and confusion matrix.
-
-### Model Performance
-
-The selected configuration uses:
-
-- Word and character TF-IDF features.
-- Logistic Regression.
-- Class balancing enabled (`class_weight="balanced"`).
-- Regularization parameter: `C = 1.0`.
-
-Results on the official MELD test split:
-
-| Metric | Result |
-|---|---:|
-| Test samples | 2,610 |
-| Accuracy | 51.46% |
-| Macro F1-score | 0.38 |
-| Weighted F1-score | 0.53 |
-
-Performance varies across emotion categories. Neutral and surprise are classified more effectively, while fear and disgust remain challenging due to limited training examples and class imbalance.
-
-### Text Emotion Probabilities for Multimodal Fusion
-
-To support integration with the speech and facial emotion recognition modules, this module exports class probabilities for each text sample.
-
-Run:
-
-```bash
-python -m text_emotion.export_fusion_probabilities
-```
-
-The script:
-
-- Loads the trained Logistic Regression model.
-- Reads MELD development and test annotations.
-- Matches utterances with manifest `sample_id` values.
-- Generates probability scores for all seven emotion categories.
-- Validates probability values and ensures each row sums to approximately 1.
-
-**Generated output files:**
-
-| File | Number of samples |
-|---|---:|
-| `features/fusion/text_dev_probabilities.csv` | 1,109 |
-| `features/fusion/text_test_probabilities.csv` | 2,610 |
-
-**CSV structure:**
-
-```text
-sample_id,anger,disgust,fear,joy,neutral,sadness,surprise
-```
-
-Each row contains a sample ID and its predicted probability for each emotion category. The `sample_id` column allows the text predictions to be aligned with corresponding speech and facial predictions during multimodal fusion.
-
-### Future Improvements
-
-- Improve recognition of minority emotion classes.
-- Experiment with transformer-based text emotion models.
-- Optimize feature extraction and classification.
-- Integrate text predictions with speech and facial emotion recognition modules.
-
-**Note:** The trained model (`text_emotion_model.joblib`) is generated locally and is not included in Git version control.

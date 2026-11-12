@@ -1,0 +1,43 @@
+# Caddy reverse proxy configuration for Staging (automatic Let's Encrypt HTTPS + HTTP->HTTPS redirect)
+# Set STAGING_DOMAIN and STAGING_API_DOMAIN in `.env.staging` before running with `--profile tls`.
+
+{$STAGING_DOMAIN:staging.example.invalid} {
+    encode zstd gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer"
+        Permissions-Policy "camera=(self), microphone=(self), geolocation=()"
+        -Server
+    }
+
+    # Optional same-origin API reverse proxy under /api/* when VITE_API_BASE_URL=/api
+    handle_path /api/* {
+        request_body {
+            max_size 52MB
+        }
+        reverse_proxy backend:8000
+    }
+
+    handle {
+        reverse_proxy frontend:8080
+    }
+}
+
+{$STAGING_API_DOMAIN:api-staging.example.invalid} {
+    encode zstd gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        -Server
+    }
+
+    request_body {
+        max_size 52MB
+    }
+
+    reverse_proxy backend:8000
+}
+

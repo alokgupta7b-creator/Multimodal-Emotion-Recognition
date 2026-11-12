@@ -1,0 +1,59 @@
+# Multimodal Emotion Recognition — FastAPI Inference Backend (Staging)
+# Note: Mount `/app/models` read-only at runtime instead of baking ~737 MB of weights into code layers.
+
+FROM python:3.11-slim-bookworm AS base
+
+ARG TORCH_INDEX_URL="https://download.pytorch.org/whl/cpu"
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    KMP_DUPLICATE_LIB_OK=TRUE \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    EMOTION_API_HOST=0.0.0.0 \
+    EMOTION_API_PORT=8000 \
+    EMOTION_API_DEVICE=cpu \
+    EMOTION_API_ENV=staging \
+    EMOTION_API_ENABLE_DOCS=0
+
+# System runtime dependencies for OpenCV (FFmpeg + GL), soundfile/librosa, and container healthcheck
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libsndfile1 \
+    libgl1 \
+    libglib2.0-0 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Create non-root unprivileged runtime user
+RUN groupadd --gid 10001 appgroup \
+    && useradd --uid 10001 --gid appgroup --shell /usr/sbin/nologin --create-home appuser
+
+# Install PyTorch / TorchVision first for efficient layer caching, then application dependencies
+COPY requirements.txt requirements-staging.txt ./
+RUN pip install --upgrade pip \
+    && pip install --index-url "${TORCH_INDEX_URL}" torch==2.6.0 torchvision==0.21.0 \
+    && pip install -r requirements-staging.txt
+
+# Copy backend source modules only (datasets/ and models/ excluded via .dockerignore)
+COPY project_config.py ./
+COPY api/ ./api/
+COPY text_emotion/ ./text_emotion/
+COPY speech_emotion/ ./speech_emotion/
+COPY facial_emotion/ ./facial_emotion/
+
+RUN mkdir -p /app/models /tmp \
+    && chown -R appuser:appgroup /app /tmp
+
+USER appuser
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:8000/ready || exit 1
+
+# Single Uvicorn worker loads DistilBERT, Wav2Vec2, ResNet18, and MTCNN once per container
+CMD ["python", "-m", "uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--timeout-graceful-shutdown", "30"]

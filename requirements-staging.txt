@@ -1,0 +1,10 @@
+# Staging backend runtime dependencies (Python 3.11)
+# Install PyTorch CPU wheels in CPU staging containers via:
+#   pip install --index-url https://download.pytorch.org/whl/cpu torch==2.6.0 torchvision==0.21.0
+# or CUDA 12.4 wheels on GPU hosts.
+-r requirements.txt
+torchvision==0.21.0
+facenet-pytorch==2.5.3
+Pillow==12.3.0
+prometheus-client==0.21.1
+

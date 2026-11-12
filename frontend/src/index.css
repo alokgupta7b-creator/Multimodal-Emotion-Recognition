@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+:root { color: #e8eef8; background: #09111f; font-family: Inter, sans-serif; color-scheme: dark; }
+* { box-sizing: border-box; } body { margin: 0; min-width: 320px; } button, textarea, select, input { font: inherit; }
+:focus-visible { outline: 2px solid #4de1d2; outline-offset: 2px; }
+::selection { color: #09111f; background: #4de1d2; }
+.grid-lines { background-image: linear-gradient(rgba(120,160,200,.06) 1px, transparent 1px), linear-gradient(90deg, rgba(120,160,200,.06) 1px, transparent 1px); background-size: 32px 32px; }
+@layer components { .panel { @apply rounded-2xl border border-white/10 bg-surface/80 shadow-2xl shadow-black/10 backdrop-blur; } .eyebrow { @apply text-[11px] font-bold uppercase tracking-[.22em] text-cyan; } .muted { @apply text-sm leading-6 text-slate-400; } }

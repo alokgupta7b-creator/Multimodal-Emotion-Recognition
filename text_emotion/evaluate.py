@@ -1,37 +1,19 @@
 
-from pathlib import Path
-
-import joblib
 import pandas as pd
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
-
-ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = ROOT.parent / "meld_dataset"
-MODEL_PATH = ROOT / "text_emotion_model.joblib"
-
-
-def find_csv(filename):
-    matches = list(DATA_DIR.rglob(filename))
-    if not matches:
-        raise FileNotFoundError(
-            f"Cannot find {filename} inside {DATA_DIR}"
-        )
-    return matches[0]
+from project_config import TEXT_MODEL_PATH, meld_annotation_path
+from text_emotion.model_io import load_text_model
+from text_emotion.preprocessing import preprocess_text
 
 
 def main():
-    if not MODEL_PATH.exists():
-        raise FileNotFoundError(
-            "Trained model not found. Run python -m text_emotion.train first."
-        )
-
-    test_df = pd.read_csv(find_csv("test_sent_emo.csv"))
+    test_df = pd.read_csv(meld_annotation_path("test"))
     test_df = test_df.dropna(subset=["Utterance", "Emotion"]).copy()
-    test_df["Utterance"] = test_df["Utterance"].astype(str).str.strip()
+    test_df["Utterance"] = test_df["Utterance"].map(preprocess_text)
     test_df["Emotion"] = test_df["Emotion"].astype(str).str.strip().str.lower()
     test_df = test_df[test_df["Utterance"] != ""]
 
-    model = joblib.load(MODEL_PATH)
+    model = load_text_model(TEXT_MODEL_PATH)
 
     predictions = model.predict(test_df["Utterance"])
 

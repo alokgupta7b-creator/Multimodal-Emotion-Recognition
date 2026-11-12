@@ -1,0 +1,73 @@
+{
+  "video_name": "dia4_utt1.mp4",
+  "duration_sec": 1.7934569408978203,
+  "total_frames": 43,
+  "sampled_frames_count": 15,
+  "total_detected_faces": 52,
+  "standard_pipeline_result": {
+    "predicted_label": "anger",
+    "confidence": 0.16168465608043014,
+    "probabilities": {
+      "anger": 0.16168465608043014,
+      "disgust": 0.12811852514302263,
+      "fear": 0.11541900353807943,
+      "joy": 0.15220304756600234,
+      "neutral": 0.15551182048351242,
+      "sadness": 0.1431853717869009,
+      "surprise": 0.14387757540205212
+    },
+    "model_identifier": "facial-cnn-v1",
+    "num_faces": 52,
+    "num_sampled_frames": 17,
+    "face_detection_coverage": 1.0,
+    "prediction_entropy": 1.940262851046848,
+    "inference_latency_ms": 20.01630002632737
+  },
+  "temporal_segments": {
+    "early": {
+      "name": "Early (0-33%)",
+      "face_count": 17,
+      "predicted_emotion": "anger",
+      "confidence": 0.8352010215029997,
+      "mean_probabilities": {
+        "anger": 0.8352010215029997,
+        "disgust": 0.002060018548303667,
+        "fear": 0.00027975832327844244,
+        "joy": 0.05993452558622641,
+        "neutral": 0.07286544363288318,
+        "sadness": 0.0217553131720599,
+        "surprise": 0.00790391383035218
+      }
+    },
+    "middle": {
+      "name": "Middle (33-66%)",
+      "face_count": 17,
+      "predicted_emotion": "anger",
+      "confidence": 0.8299548555822933,
+      "mean_probabilities": {
+        "anger": 0.8299548555822933,
+        "disgust": 0.0022093699628706366,
+        "fear": 0.00030285771251382194,
+        "joy": 0.062262253507095223,
+        "neutral": 0.07443457513171084,
+        "sadness": 0.022430684965322998,
+        "surprise": 0.008405401563162314
+      }
+    },
+    "late": {
+      "name": "Late (66-100%)",
+      "face_count": 18,
+      "predicted_emotion": "anger",
+      "confidence": 0.8225700822141435,
+      "mean_probabilities": {
+        "anger": 0.8225700822141435,
+        "disgust": 0.00249112465341265,
+        "fear": 0.00036356111377244815,
+        "joy": 0.06466357347865899,
+        "neutral": 0.07696931229697333,
+        "sadness": 0.023791167367663648,
+        "surprise": 0.009151176756454838
+      }
+    }
+  }
+}

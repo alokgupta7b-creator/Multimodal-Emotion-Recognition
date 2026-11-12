@@ -1,30 +1,20 @@
 
-from pathlib import Path
-
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.pipeline import Pipeline, FeatureUnion
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score
-
-ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = ROOT.parent / "meld_dataset"
-
-
-def find_csv(filename):
-    matches = list(DATA_DIR.rglob(filename))
-    if not matches:
-        raise FileNotFoundError(f"Cannot find {filename} in {DATA_DIR}")
-    return matches[0]
+from project_config import meld_annotation_path
+from text_emotion.preprocessing import preprocess_text
 
 
-train_df = pd.read_csv(find_csv("train_sent_emo.csv"))
-dev_df = pd.read_csv(find_csv("dev_sent_emo.csv"))
+train_df = pd.read_csv(meld_annotation_path("train"))
+dev_df = pd.read_csv(meld_annotation_path("dev"))
 
 
 def clean(df):
     df = df.dropna(subset=["Utterance", "Emotion"]).copy()
-    df["Utterance"] = df["Utterance"].astype(str).str.strip()
+    df["Utterance"] = df["Utterance"].map(preprocess_text)
     df["Emotion"] = df["Emotion"].astype(str).str.strip().str.lower()
     return df[df["Utterance"] != ""]
 

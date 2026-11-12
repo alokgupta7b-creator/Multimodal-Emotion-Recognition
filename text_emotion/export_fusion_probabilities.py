@@ -1,13 +1,10 @@
 
-from pathlib import Path
-
-import joblib
 import pandas as pd
+from project_config import MELD_MANIFESTS, MELD_ROOT, TEXT_MODEL_PATH, REPOSITORY_ROOT
+from text_emotion.model_io import load_text_model
+from text_emotion.preprocessing import preprocess_text
 
-ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = ROOT / "datasets" / "MELD"
-MODEL_PATH = ROOT / "text_emotion_model.joblib"
-OUTPUT_DIR = ROOT / "features" / "fusion"
+OUTPUT_DIR = REPOSITORY_ROOT / "features" / "fusion"
 
 EMOTIONS = [
     "anger", "disgust", "fear", "joy",
@@ -16,8 +13,8 @@ EMOTIONS = [
 
 
 def export_split(split):
-    annotation_path = DATA_DIR / "annotations" / f"{split}_sent_emo.csv"
-    manifest_path = DATA_DIR / "manifests" / f"{split}_manifest.csv"
+    annotation_path = MELD_ROOT / "annotations" / f"{split}_sent_emo.csv"
+    manifest_path = MELD_MANIFESTS / f"{split}_manifest.csv"
 
     annotations = pd.read_csv(annotation_path)
     manifest = pd.read_csv(manifest_path)
@@ -56,8 +53,7 @@ def export_split(split):
     if data["Utterance"].isna().any():
         raise ValueError(f"Some manifest IDs have no matching text in {split}")
 
-    # Match train.py preprocessing: strip whitespace only
-    data["Utterance"] = data["Utterance"].astype(str).str.strip()
+    data["Utterance"] = data["Utterance"].map(preprocess_text)
     data = data[data["Utterance"] != ""].copy()
 
     # Use raw text; do not call preprocess_text()
@@ -83,10 +79,7 @@ def export_split(split):
     print(result.head(3).to_string(index=False))
 
 
-if not MODEL_PATH.exists():
-    raise FileNotFoundError(f"Model not found: {MODEL_PATH}")
-
-model = joblib.load(MODEL_PATH)
+model = load_text_model(TEXT_MODEL_PATH)
 
 if list(model.classes_) != EMOTIONS:
     raise ValueError(f"Unexpected model classes: {list(model.classes_)}")

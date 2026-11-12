@@ -1,0 +1,32 @@
+{
+  "train_manifest_count": 9988,
+  "dev_manifest_count": 1108,
+  "train_cached_count": 9756,
+  "dev_cached_count": 1080,
+  "train_excluded_faces": 232,
+  "dev_excluded_faces": 28,
+  "train_distribution": {
+    "neutral": 4593,
+    "joy": 1710,
+    "surprise": 1177,
+    "anger": 1082,
+    "sadness": 670,
+    "disgust": 267,
+    "fear": 257
+  },
+  "dev_distribution": {
+    "neutral": 458,
+    "joy": 155,
+    "anger": 152,
+    "surprise": 147,
+    "sadness": 108,
+    "fear": 38,
+    "disgust": 22
+  },
+  "train_intra_duplicates": 162,
+  "train_dev_duplicates": 0,
+  "black_images": 0,
+  "low_contrast_images": 75,
+  "mean_intensity": 70.6404240352625,
+  "mean_contrast": 38.25944701431466
+}
