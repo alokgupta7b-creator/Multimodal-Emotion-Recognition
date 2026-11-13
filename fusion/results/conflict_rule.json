@@ -1,0 +1,30 @@
+{
+  "independent errors": {
+    "accepted_of_5": 5,
+    "mean_lift": 1.4841945187674366,
+    "default_flag_share": 0.6806000000000001,
+    "default_err_flagged": 0.2278151238347324,
+    "default_err_unflagged": 0.11865641256710699
+  },
+  "shared noise rho=0.6": {
+    "accepted_of_5": 0,
+    "mean_lift": 0.9471965380423223,
+    "default_flag_share": 0.15215,
+    "default_err_flagged": 0.324907015204069,
+    "default_err_unflagged": 0.35931618054659914
+  },
+  "one modality misleading on 25% of rows": {
+    "accepted_of_5": 0,
+    "mean_lift": 1.0709065714574255,
+    "default_flag_share": 0.64635,
+    "default_err_flagged": 0.24966489746897497,
+    "default_err_unflagged": 0.21067669363776392
+  },
+  "shared confuser 30%": {
+    "accepted_of_5": 0,
+    "mean_lift": 0.7430052586802238,
+    "default_flag_share": 0.021400000000000002,
+    "default_err_flagged": 0.2610563340879496,
+    "default_err_unflagged": 0.47477237247713877
+  }
+}
